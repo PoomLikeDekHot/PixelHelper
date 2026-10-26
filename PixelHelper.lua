@@ -146,7 +146,7 @@ local settings = {
     autoPath = true, pathPriority = {},
     campChoice = 2, shrineTrain = true, altarOffer = false,
     shopBuy = { potion = false, tonic = false, whetstone = false, ward = false },
-    autoContinue = true, autoChest = true, autoDeath = true,
+    autoContinue = true, autoChest = true, autoDeath = true, autoResume = true,
     storyNextAct = true, storyExitAct = 0,
     tormentNextTier = true, tormentExitTier = 0,
     autoReplay = true, autoCastle = true,
@@ -1198,6 +1198,7 @@ local flowCard = card(runR, 1, "▸", T.green, "Flow", "Keep the run moving")
 switchRow(flowCard, "Auto Continue", "Close victory screens and cutscenes", "autoContinue")
 switchRow(flowCard, "Collect Boss Chest", "Close the loot chest after a boss", "autoChest")
 switchRow(flowCard, "Continue After Death", "Press Continue in the Light", "autoDeath")
+switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head back in (never Abandon)", "autoResume")
 
 local endCard = card(runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
@@ -1883,8 +1884,26 @@ end)
 
 L.trySelectSlot = trySelectSlot
 -- auto start: fires when the cooldown has passed and the lobby is ready
+-- "UNFINISHED BATTLE" window (server event RunResumeOffer): its green button sends RunLobby { action = "resume" }.
+-- The window resets its button after 8s if nothing happens, so retry every 10s while it is open.
+local function resumeWindowOpen()
+    local w = PlayerGui:FindFirstChild("RunResumeWindow", true)
+    return w ~= nil and shownOnScreen(w)
+end
+
+function L.resume()
+    if not settings.autoResume or not once("resume", 10) then return end
+    RPGCommand:FireServer("RunLobby", { action = "resume" })
+    ui.lobbyStatus.Text = "Resuming unfinished battle…"
+end
+
+function L.resumeTick()
+    if settings.autoResume and resumeWindowOpen() then L.resume() end
+end
+
 function L.autoStart()
     if os.clock() - lastLobbyFire < LOBBY_COOLDOWN then return end
+    if resumeWindowOpen() then ui.lobbyStatus.Text = "Auto Start: unfinished battle waiting" return end
     local ok, why = canStart()
     if ok then fireStart() else ui.lobbyStatus.Text = "Auto Start: " .. why end
 end
@@ -3323,6 +3342,10 @@ RPGState.OnClientEvent:Connect(function(name, data)
         if type(p) == "table" and (p.gearBag or p.gear) then
             setProfile(p)
         end
+    elseif name == "RunResumeOffer" and settings.autoResume then
+        if not (type(data) == "table" and data.closed) then
+            task.delay(1.5, L.resume) -- let the window open first, like a player would
+        end
     elseif name == "LightDialogue" and R.runOn("autoDeath") then
         local payload = type(data) == "table" and data or {}
         task.delay(math.max(1, settings.runDelay), function()
@@ -3344,6 +3367,7 @@ task.spawn(function()
     local lastClick, lastSync, lastRunSync, lastSell = 0, 0, 0, 0
     while alive() and gui.Parent do
         pcall(L.trySelectSlot)
+        pcall(L.resumeTick)
         if settings.auto then pcall(L.autoStart) end
         -- in a run but no RunState yet (script loaded after it was sent): ask for it
         if settings.autoRun and inAdventure() and os.clock() - lastRunSync > 3 and (run == nil or os.clock() - runAt > 20) then
