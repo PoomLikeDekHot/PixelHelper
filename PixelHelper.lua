@@ -1235,6 +1235,13 @@ end
 
 -- keep list: never sell anything whose name contains one of these words
 local keepCard = card(sellR, 1, "♥", T.pink, "Never Sell", "Names you keep, even if ticked above")
+local pickRow = row(keepCard, nil, nil, 54)
+local pickBtn = new("TextButton", {
+    Parent = pickRow, AutoButtonColor = false, BackgroundColor3 = T.accent, BorderSizePixel = 0,
+    AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 34),
+    Text = "Choose gear from the list", FontFace = FONT_BOLD, TextSize = 13, TextColor3 = T.bg,
+}, { corner(R_CTL) })
+hoverFill(pickBtn, function() return T.accent end, T.accentT)
 local addRow = row(keepCard, nil, nil, 50)
 local keepBox = new("TextBox", {
     Parent = addRow, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
@@ -1280,6 +1287,224 @@ local function addKeep(text)
 end
 addBtn.MouseButton1Click:Connect(function() addKeep(keepBox.Text); keepBox.Text = "" end)
 keepBox.FocusLost:Connect(function(enter) if enter then addKeep(keepBox.Text); keepBox.Text = "" end end)
+
+-- popup: every gear piece in the game (GearConfig.Items) with its picture; tick names to keep
+do
+    local overlay, listFrame, searchBox, countText, chipButtons
+    local filterKind, bagOnly, limit = "All", false, 60
+    local catalog
+
+    local RARITY_COLOR = {}
+    for _, r in ipairs(RARITIES) do RARITY_COLOR[r.id] = r.color end
+
+    local function getCatalog()
+        if catalog then return catalog end
+        catalog = {}
+        local seen = {}
+        for id, it in pairs(GearConfig and type(GearConfig.Items) == "table" and GearConfig.Items or {}) do
+            local kind = type(it) == "table" and (it.gearKind or it.kind)
+            if kind and table.find(GEAR_KINDS, kind) and type(it.name) == "string" then
+                local key = string.lower(it.name)
+                if not seen[key] then
+                    seen[key] = true
+                    table.insert(catalog, { id = id, name = it.name, key = key, kind = kind, rarity = it.rarity })
+                end
+            end
+        end
+        local order = {}
+        for i, k in ipairs(GEAR_KINDS) do order[k] = i end
+        table.sort(catalog, function(a, b)
+            if a.kind ~= b.kind then return (order[a.kind] or 99) < (order[b.kind] or 99) end
+            return a.name < b.name
+        end)
+        return catalog
+    end
+
+    -- lowercase base name -> how many you own
+    local function bagCounts()
+        local out = {}
+        if not (profile and GearConfig and type(profile.gearBag) == "table") then return out end
+        for _, raw in pairs(profile.gearBag) do
+            local ok, d = pcall(GearConfig.Describe, raw)
+            if ok and d and d.name then
+                local k = string.lower(d.name)
+                out[k] = (out[k] or 0) + 1
+            end
+        end
+        return out
+    end
+
+    local function refreshCount()
+        local n = 0
+        for _ in pairs(settings.keepNames) do n += 1 end
+        countText.Text = n .. " kept"
+    end
+
+    local renderList
+    function renderList()
+        for _, c in ipairs(listFrame:GetChildren()) do
+            if c:IsA("GuiObject") then c:Destroy() end
+        end
+        local q = string.lower(searchBox.Text or "")
+        local owned = bagCounts()
+        local shown, matches = 0, 0
+        for _, it in ipairs(getCatalog()) do
+            local ok = (filterKind == "All" or it.kind == filterKind)
+                and (q == "" or it.key:find(q, 1, true) ~= nil)
+                and (not bagOnly or owned[it.key] ~= nil)
+            if ok then
+                matches += 1
+                if shown < limit then
+                    shown += 1
+                    local kept = settings.keepNames[it.key] == true
+                    local r = new("Frame", {
+                        Parent = listFrame, LayoutOrder = shown, BorderSizePixel = 0,
+                        BackgroundColor3 = kept and T.raised2 or T.raised, Size = UDim2.new(1, 0, 0, 48),
+                    }, { corner(R_CTL), pad(0, 12, 0, 8) })
+                    local pic = new("Frame", {
+                        Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0,
+                        Position = UDim2.new(0, 0, 0.5, -18), Size = UDim2.fromOffset(36, 36),
+                    }, { corner(8) })
+                    local drawn = false
+                    if Icons.mod and Icons.mod.GearIcon then
+                        pcall(function()
+                            local key, palette = Icons.mod.GearIcon({ id = it.id }, it.kind)
+                            drawn = Icons.draw(pic, key, 30, palette) ~= nil
+                        end)
+                    end
+                    if not drawn then
+                        label(pic, it.kind:sub(1, 1), 16, T.muted, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
+                    end
+                    label(r, it.name, 13, RARITY_COLOR[it.rarity] or T.text, FONT_SEMI, {
+                        Position = UDim2.fromOffset(46, 6), Size = UDim2.new(1, -86, 0, 18),
+                    })
+                    local sub = it.kind .. (it.rarity and (" · " .. it.rarity) or "") .. (owned[it.key] and (" · in bag x" .. owned[it.key]) or "")
+                    label(r, sub, 10, owned[it.key] and T.green or T.muted, FONT, {
+                        Position = UDim2.fromOffset(46, 25), Size = UDim2.new(1, -86, 0, 14),
+                    })
+                    checkbox(r, function() return settings.keepNames[it.key] == true end, function()
+                        settings.keepNames[it.key] = (not settings.keepNames[it.key]) or nil
+                        r.BackgroundColor3 = settings.keepNames[it.key] and T.raised2 or T.raised
+                        save(); refreshCount(); renderKeep(); renderBagNames(); refreshSellPreview()
+                    end)
+                end
+            end
+        end
+        if matches > shown then
+            local more = new("TextButton", {
+                Parent = listFrame, LayoutOrder = shown + 1, AutoButtonColor = false, BorderSizePixel = 0,
+                BackgroundColor3 = T.raised, Size = UDim2.new(1, 0, 0, 38),
+                Text = string.format("Show more  (%d of %d)", shown, matches), FontFace = FONT_SEMI, TextSize = 12, TextColor3 = T.text,
+            }, { corner(R_CTL) })
+            more.MouseButton1Click:Connect(function() limit += 60; renderList() end)
+        elseif matches == 0 then
+            label(listFrame, catalog and #catalog > 0 and "Nothing matches." or "Gear list isn't available yet.", 12, T.faint, FONT, {
+                LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 40), TextXAlignment = Enum.TextXAlignment.Center,
+            })
+        end
+        refreshCount()
+    end
+
+    local function build()
+        overlay = new("TextButton", {
+            Parent = window, Name = "KeepPicker", AutoButtonColor = false, Text = "", Visible = false, ZIndex = 60,
+            BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.4, Size = UDim2.fromScale(1, 1),
+        }, { corner(R_CARD) })
+        local panel = new("Frame", {
+            Parent = overlay, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, -48, 1, -48), BackgroundColor3 = T.card, BorderSizePixel = 0, Active = true,
+        }, { corner(R_CARD), line(LINE2) })
+        -- header
+        local tile = new("Frame", {
+            Parent = panel, Position = UDim2.fromOffset(18, 16), Size = UDim2.fromOffset(42, 42),
+            BackgroundColor3 = T.pink, BackgroundTransparency = 0.8, BorderSizePixel = 0,
+        }, { corner(12) })
+        Icons.slot(tile, "Never Sell", 30, "♥", T.pink, 2)
+        label(panel, "Choose gear to keep", 16, T.text, FONT_BOLD, { Position = UDim2.fromOffset(72, 18), Size = UDim2.new(1, -130, 0, 20) })
+        label(panel, "Ticked names are never sold", 11, T.muted, FONT, { Position = UDim2.fromOffset(72, 40), Size = UDim2.new(1, -130, 0, 14) })
+        local close = new("TextButton", {
+            Parent = panel, AutoButtonColor = false, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 18),
+            Size = UDim2.fromOffset(30, 30), BackgroundColor3 = T.raised, BorderSizePixel = 0,
+            Text = "×", FontFace = FONT_BOLD, TextSize = 18, TextColor3 = T.muted,
+        }, { corner(15) })
+        hoverFill(close, function() return T.raised end, T.raised2)
+        -- search
+        searchBox = new("TextBox", {
+            Parent = panel, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+            Position = UDim2.fromOffset(18, 70), Size = UDim2.new(1, -36, 0, 34),
+            PlaceholderText = "Search gear name…", PlaceholderColor3 = T.faint, Text = "",
+            FontFace = FONT, TextSize = 13, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left,
+        }, { corner(R_CTL), line(LINE2), pad(0, 12, 0, 12) })
+        -- type chips
+        local chips = new("ScrollingFrame", {
+            Parent = panel, BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(18, 112), Size = UDim2.new(1, -36, 0, 34),
+            CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollingDirection = Enum.ScrollingDirection.X,
+            ScrollBarThickness = 0,
+        }, { new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }) })
+        chipButtons = {}
+        local function refreshChips()
+            for name, b in pairs(chipButtons) do
+                local on = (name == "In my bag") and bagOnly or (name == filterKind)
+                b.BackgroundColor3 = on and T.accent or T.raised
+                b.TextColor3 = on and T.bg or T.text
+            end
+        end
+        local names = { "All" }
+        for _, k in ipairs(GEAR_KINDS) do table.insert(names, k) end
+        table.insert(names, "In my bag")
+        for i, name in ipairs(names) do
+            local b = new("TextButton", {
+                Parent = chips, LayoutOrder = i, AutoButtonColor = false, BorderSizePixel = 0, BackgroundColor3 = T.raised,
+                Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X,
+                Text = name, FontFace = FONT_SEMI, TextSize = 12, TextColor3 = T.text,
+            }, { corner(15), pad(0, 12, 0, 12) })
+            chipButtons[name] = b
+            b.MouseButton1Click:Connect(function()
+                if name == "In my bag" then bagOnly = not bagOnly else filterKind = name end
+                limit = 60
+                refreshChips(); renderList()
+            end)
+        end
+        refreshChips()
+        -- list
+        listFrame = new("ScrollingFrame", {
+            Parent = panel, BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(18, 154), Size = UDim2.new(1, -36, 1, -214),
+            CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y,
+            VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar, ScrollBarThickness = 4, ScrollBarImageColor3 = T.faint,
+        }, { vlist(6) })
+        -- footer
+        countText = label(panel, "", 12, T.muted, FONT_SEMI, {
+            AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 18, 1, -18), Size = UDim2.new(1, -150, 0, 30),
+        })
+        local doneRow = new("Frame", {
+            Parent = panel, BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 1),
+            Position = UDim2.new(1, -18, 1, -16), Size = UDim2.fromOffset(110, 34),
+        })
+        local done = primaryButton(doneRow, "Done", 110)
+
+        local function hide() overlay.Visible = false end
+        close.MouseButton1Click:Connect(hide)
+        done.MouseButton1Click:Connect(hide)
+        overlay.MouseButton1Click:Connect(hide) -- click outside the panel
+        local searchSeq = 0
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            searchSeq += 1
+            local mySeq = searchSeq
+            task.delay(0.25, function() -- wait until typing pauses
+                if mySeq == searchSeq then limit = 60; renderList() end
+            end)
+        end)
+    end
+
+    pickBtn.MouseButton1Click:Connect(function()
+        if not overlay then build() end
+        overlay.Visible = true
+        limit = 60
+        renderList()
+    end)
+end
 
 -- names currently in the bag, tick to keep
 local bagCard = card(sellR, 2, "☰", T.amber, "In Your Bag", "Tick a name to keep it")
