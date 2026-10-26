@@ -2269,14 +2269,15 @@ end
 local function choosePath(state)
     local cards = type(state.choices) == "table" and state.choices or {}
     if #cards == 0 then return nil end
+    -- "dungeonReturn" leaves a key dungeon early (back to the story). It is never the way to finish a dungeon,
+    -- so it is only taken when it is the only card; "retreat" (Turn Back) is the real way out of a run.
     local function indexOf(t)
         for i, c in ipairs(cards) do
-            local ct = c.type == "dungeonReturn" and "retreat" or c.type
-            if ct == t then return i end
+            if c.type == t then return i end
         end
     end
     if indexOf("boss") then return indexOf("boss"), "Boss" end
-    if wantsToLeave(state) and indexOf("retreat") then return indexOf("retreat"), "Turn Back (leaving)" end
+    if not state.dungeon and wantsToLeave(state) and indexOf("retreat") then return indexOf("retreat"), "Turn Back (leaving)" end
     for _, p in ipairs(settings.pathPriority) do
         if p.on then
             local i = indexOf(p.id)
