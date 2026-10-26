@@ -501,6 +501,91 @@ local function slider(parent, get, set, min, max, step, fmt, zeroText)
     return holder, refresh
 end
 
+---------------------------------------------------------------- pixel icons
+-- The game keeps its pixel art in PixelIcons.Art ({ art = { "..KK..", … }, palette = { K = Color3 } }).
+-- Its own sprite renderer draws nothing when called from here, so we build the art ourselves:
+-- one Frame per run of same-coloured pixels in a row.
+local Icons = { mod = nil, slots = {}, onReady = {} }
+
+-- tab / card name -> art key in PixelIcons.Art
+local ICON_KEYS = {
+    ["Lobby"] = "duel", ["Auto Farm"] = "sword", ["Run"] = "nodeBoss", ["Auto Sell"] = "coin",
+    ["Auto Forge"] = "cauldron", ["Settings"] = "book",
+    ["Stage"] = "nodeFight", ["Auto Start"] = "hourglass", ["Auto Select Character"] = "lineage",
+    ["Auto Combat"] = "skull", ["Attack"] = "sword", ["Defense"] = "shield", ["Potion"] = "potion",
+    ["Auto Skills"] = "star", ["Auto Run"] = "nodeBoss", ["Auto Choose Path"] = "nodeFight",
+    ["Events"] = "nodeMystery", ["Flow"] = "nodeTreasure", ["When a Run Ends"] = "nodeRest",
+    ["Gear Types"] = "pouch", ["Rarity"] = "star", ["Never Sell"] = "heart", ["In Your Bag"] = "pouch",
+    ["Pick Gear"] = "sword", ["Window"] = "book", ["Files"] = "blueprint", ["Unload"] = "skull",
+}
+
+-- draws art `key` centred in `parent`, as large as fits in `size` px. returns the holder or nil
+function Icons.draw(parent, key, size, palette, z)
+    local PI = Icons.mod
+    local a = PI and type(PI.Art) == "table" and PI.Art[key]
+    if type(a) ~= "table" or type(a.art) ~= "table" then return nil end
+    local pal = {}
+    for k, v in pairs(type(a.palette) == "table" and a.palette or {}) do pal[k] = v end
+    for k, v in pairs(type(palette) == "table" and palette or {}) do pal[k] = v end
+    local w, h = 0, #a.art
+    for _, r in ipairs(a.art) do w = math.max(w, #tostring(r)) end
+    if w == 0 or h == 0 then return nil end
+    local unit = math.max(1, math.floor(size / math.max(w, h)))
+    local holder = new("Frame", {
+        Parent = parent, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(w * unit, h * unit), ZIndex = z or 2,
+    })
+    for y, rowText in ipairs(a.art) do
+        rowText = tostring(rowText)
+        local x = 1
+        while x <= #rowText do
+            local ch = rowText:sub(x, x)
+            local c = pal[ch]
+            if ch ~= "." and typeof(c) == "Color3" then
+                local x2 = x
+                while x2 < #rowText and rowText:sub(x2 + 1, x2 + 1) == ch do x2 += 1 end
+                new("Frame", {
+                    Parent = holder, BorderSizePixel = 0, BackgroundColor3 = c, ZIndex = z or 2,
+                    Position = UDim2.fromOffset((x - 1) * unit, (y - 1) * unit), Size = UDim2.fromOffset((x2 - x + 1) * unit, unit),
+                })
+                x = x2 + 1
+            else
+                x += 1
+            end
+        end
+    end
+    return holder
+end
+
+-- a glyph now, swapped for the game's art once PixelIcons has loaded
+function Icons.slot(parent, name, size, glyph, color, z)
+    local fallback = label(parent, glyph, math.floor(size * 0.6), color, FONT_BOLD, {
+        Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = z or 2,
+    })
+    local s = { parent = parent, key = ICON_KEYS[name], size = size, fallback = fallback, z = z }
+    local function fill()
+        if s.key and Icons.draw(s.parent, s.key, s.size, nil, s.z) then s.fallback.Visible = false end
+    end
+    if Icons.mod then fill() else table.insert(Icons.slots, fill) end
+    return fallback
+end
+
+task.spawn(function()
+    local ok, mod = pcall(function()
+        local scripts = LocalPlayer:WaitForChild("PlayerScripts", 15)
+        local found = scripts and scripts:FindFirstChild("PixelIcons", true)
+        if not found then found = ReplicatedStorage:FindFirstChild("PixelIcons", true) end
+        return found and found:IsA("ModuleScript") and require(found) or nil
+    end)
+    if not (ok and type(mod) == "table" and type(mod.Art) == "table") then
+        warn("[PixelHelper] PixelIcons not available: " .. tostring(mod))
+        return
+    end
+    Icons.mod = mod
+    for _, fill in ipairs(Icons.slots) do pcall(fill) end
+    for _, f in ipairs(Icons.onReady) do pcall(f) end
+end)
+
 local function smallButton(parent, text, x)
     local b = new("TextButton", {
         Parent = parent, AutoButtonColor = false, AnchorPoint = Vector2.new(1, 0.5),
@@ -685,14 +770,14 @@ local function card(column, order, glyph, tint, title, sub, key, onChange)
         Parent = column, LayoutOrder = order, BackgroundColor3 = T.card, BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
     }, { corner(R_CARD), line(), vlist(0) })
-    local head = new("Frame", { Parent = c, LayoutOrder = 0, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 60) }, { pad(0, 16, 0, 16) })
+    local head = new("Frame", { Parent = c, LayoutOrder = 0, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 66) }, { pad(0, 16, 0, 16) })
     local tile = new("Frame", {
-        Parent = head, Size = UDim2.fromOffset(32, 32), Position = UDim2.new(0, 0, 0.5, -16),
-        BackgroundColor3 = tint, BackgroundTransparency = 0.82, BorderSizePixel = 0,
-    }, { corner(R_CTL) })
-    label(tile, glyph, 14, tint, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
-    label(head, title, 14, T.text, FONT_BOLD, { Position = UDim2.fromOffset(44, 11), Size = UDim2.new(1, -100, 0, 18) })
-    label(head, sub or "", 11, T.muted, FONT, { Position = UDim2.fromOffset(44, 30), Size = UDim2.new(1, -100, 0, 14) })
+        Parent = head, Size = UDim2.fromOffset(42, 42), Position = UDim2.new(0, 0, 0.5, -21),
+        BackgroundColor3 = tint, BackgroundTransparency = 0.8, BorderSizePixel = 0,
+    }, { corner(12), new("UIStroke", { Color = tint, Transparency = 0.55, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }) })
+    Icons.slot(tile, title, 30, glyph, tint, 3)
+    label(head, title, 15, T.text, FONT_BOLD, { Position = UDim2.fromOffset(54, 13), Size = UDim2.new(1, -110, 0, 20) })
+    label(head, sub or "", 11, T.muted, FONT, { Position = UDim2.fromOffset(54, 34), Size = UDim2.new(1, -110, 0, 14) })
     local refreshHead
     if key then
         local _, r = switch(head, function() return settings[key] end, function()
@@ -803,7 +888,7 @@ local tabs = {}
 -- highlight that glides behind the selected nav item (sits on the sidebar, outside the list layout)
 local navPill = new("Frame", {
     Parent = sidebar, BackgroundColor3 = T.raised, BorderSizePixel = 0,
-    Position = UDim2.fromOffset(10, 96), Size = UDim2.new(1, -20, 0, 38),
+    Position = UDim2.fromOffset(10, 96), Size = UDim2.new(1, -20, 0, 40),
 }, { corner(R_CTL) })
 
 local function selectTab(index)
@@ -831,10 +916,13 @@ local function addTab(section, glyph, name, subtitle)
     end
     local b = new("TextButton", {
         Parent = navList, LayoutOrder = #tabs * 10 + 2, AutoButtonColor = false,
-        Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, Text = "", ZIndex = 2,
+        Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, Text = "", ZIndex = 2,
     })
-    local icon = label(b, glyph, 13, T.faint, FONT_BOLD, { Position = UDim2.fromOffset(12, 0), Size = UDim2.new(0, 18, 1, 0), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 2 })
-    local l = label(b, name, 13, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(40, 0), Size = UDim2.new(1, -44, 1, 0), ZIndex = 2 })
+    local iconBox = new("Frame", {
+        Parent = b, BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0.5, -13), Size = UDim2.fromOffset(26, 26), ZIndex = 2,
+    })
+    local icon = Icons.slot(iconBox, name, 24, glyph, T.faint, 3)
+    local l = label(b, name, 14, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(44, 0), Size = UDim2.new(1, -48, 1, 0), ZIndex = 2 })
     local page, left, right = makePage()
     table.insert(tabs, { button = b, label = l, icon = icon, page = page, name = name, subtitle = subtitle })
     local index = #tabs
@@ -2085,26 +2173,8 @@ end -- AUTO SELL LOGIC
 local forgeTick -- set below
 local villageBusy = false -- the Village service answers "One thing at a time." to overlapping requests
 do
--- the game's own pixel-art drawer (PlayerScripts.PlatformBattlesClient.PixelIcons).
--- Loaded in the background so a slow require can never stall the UI; tiles show a letter until it's ready.
-local PixelIcons, iconsLoading = nil, false
-local function pixelIcons()
-    if PixelIcons == nil and not iconsLoading then
-        iconsLoading = true
-        task.spawn(function()
-            local ok, mod = pcall(function()
-                local scripts = LocalPlayer:WaitForChild("PlayerScripts", 10)
-                local found = scripts and scripts:FindFirstChild("PixelIcons", true)
-                if not found then found = ReplicatedStorage:FindFirstChild("PixelIcons", true) end
-                return found and found:IsA("ModuleScript") and require(found) or nil
-            end)
-            PixelIcons = (ok and type(mod) == "table" and mod.Draw) and mod or false
-            if not ok then warn("[PixelHelper] PixelIcons: " .. tostring(mod)) end
-            if PixelIcons then renderForge(true) end -- redraw with real pictures
-        end)
-    end
-    return PixelIcons or nil
-end
+-- redraw with real pictures once the game's art has loaded (tiles show a letter until then)
+table.insert(Icons.onReady, function() renderForge(true) end)
 
 local RARITY_ORDER, RARITY_COLOR = {}, {}
 for i, r in ipairs(RARITIES) do RARITY_ORDER[r.id], RARITY_COLOR[r.id] = i, r.color end
@@ -2153,40 +2223,20 @@ local function forgeItems()
     return out
 end
 
+-- the game picks the art + colours for a piece with PixelIcons.GearIcon; we draw it with Icons.draw
 local function drawPicture(parent, entry)
-    local PI = pixelIcons()
-    if not PI then
-        label(parent, string.sub(entry.kind or "?", 1, 1), 22, RARITY_COLOR[entry.rarity] or T.text, FONT_BOLD, {
-            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
-        })
-        return
+    local PI = Icons.mod
+    local drawn = false
+    if PI and PI.GearIcon then
+        local ok, err = pcall(function()
+            local key, palette = PI.GearIcon(entry.desc, entry.kind)
+            drawn = Icons.draw(parent, key, 52, palette, parent.ZIndex + 1) ~= nil
+        end)
+        if not ok then warn("[PixelHelper] gear picture: " .. tostring(err)) end
     end
-    local ok, err = pcall(function()
-        local name, palette = PI.GearIcon(entry.desc, entry.kind)
-        local unit = PI.FitUnit(name, 52, 4)
-        local w, h = PI.Size(name, unit)
-        local holder = new("Frame", {
-            Parent = parent, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(w, h), ZIndex = parent.ZIndex + 1,
-        })
-        -- same call the game's forge list uses: drawn on a later frame, then the sprite is
-        -- anchored to the bottom-centre of its holder
-        local opts = { zIndex = parent.ZIndex + 1, palette = palette }
-        local function place(sprite)
-            if type(sprite) == "table" and typeof(sprite.container) == "Instance" then
-                sprite.container.Position = UDim2.new(0.5, 0, 1, 0)
-            end
-        end
-        if PI.DrawLater then
-            PI.DrawLater(holder, name, unit, opts, place)
-        else
-            task.spawn(function() place(PI.Draw(holder, name, unit, opts)) end)
-        end
-    end)
-    if not ok then
-        warn("[PixelHelper] gear picture: " .. tostring(err))
+    if not drawn then
         label(parent, string.sub(entry.kind or "?", 1, 1), 22, RARITY_COLOR[entry.rarity] or T.text, FONT_BOLD, {
-            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
+            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = parent.ZIndex + 1,
         })
     end
 end
