@@ -131,6 +131,7 @@ local settings = {
     -- lobby
     mode = 1, diff = { 1, 1 }, act = 1, tier = 1, auto = false,
     autoSlot = false, slot = 1, -- pick this character on the select screen
+    autoRejoin = true, rejoinAfter = 40, lobbyPlaceId = 0, -- stuck on the boot screen -> rejoin
     -- combat
     combat = false, autoAttack = true, perfectAttack = true, hideMinigame = true,
     perfectDodge = true, autoGuard = true,
@@ -1025,6 +1026,8 @@ stepper(slotRow, function() return settings.slot end, function(v) settings.slot 
 local slotStatus = valueRow(slotCard, "Status")
 slotStatus.Text = "—"
 footerNote(slotCard, "Only presses a slot that already has a character. Empty or locked slots are skipped.")
+switchRow(slotCard, "Rejoin if stuck", "Stuck on \"CHARACTERS READY\" with no menu: rejoin", "autoRejoin")
+sliderRow(slotCard, "Stuck for", "Seconds before rejoining", "rejoinAfter", 20, 120, 5, "%ds")
 ui.slotStatus = slotStatus
 
 function refreshLobby()
@@ -1651,18 +1654,53 @@ end
 local lastLobbyFire = 0
 local LOBBY_COOLDOWN = 8
 
+-- After a teleport the game reloads your last character by itself. If that load doesn't finish it
+-- leaves you on the boot screen ("CHARACTERS READY / CHOOSE YOUR ROAD") and never shows the menu.
+local stuckSince
+
+local function rejoin()
+    local placeId = workspace:GetAttribute("PBAdventureServer") == true and tonumber(settings.lobbyPlaceId) or game.PlaceId
+    if not placeId or placeId == 0 then placeId = game.PlaceId end
+    ui.slotStatus.Text = "Stuck — rejoining…"
+    pcall(function() game:GetService("TeleportService"):Teleport(placeId, LocalPlayer) end)
+end
+
+local function watchStuck(menuShown)
+    if menuShown or LocalPlayer:GetAttribute("RPGGameplayReady") == true then
+        stuckSince = nil
+        return
+    end
+    stuckSince = stuckSince or os.clock()
+    local stuckFor = os.clock() - stuckSince
+    if settings.autoRejoin and stuckFor >= settings.rejoinAfter and once("rejoin", 90) then
+        rejoin()
+    elseif stuckFor >= 5 then
+        ui.slotStatus.Text = string.format("No menu for %ds%s", math.floor(stuckFor), settings.autoRejoin and string.format(" (rejoin at %ds)", settings.rejoinAfter) or "")
+    end
+end
+
 -- character select screen: PlayerGui … SlotCards / Slot<n> / … / Action (the card button the game listens to)
 local function trySelectSlot()
-    if not settings.autoSlot or LocalPlayer:GetAttribute("RPGGameplayReady") == true then return end
+    if LocalPlayer:GetAttribute("RPGGameplayReady") == true then
+        stuckSince = nil
+        if workspace:GetAttribute("PBAdventureServer") ~= true and settings.lobbyPlaceId ~= game.PlaceId then
+            settings.lobbyPlaceId = game.PlaceId; save() -- remembered so an adventure server can rejoin the lobby
+        end
+        return
+    end
+    if not settings.autoSlot then return end
     local cards, menuButton
     for _, d in ipairs(PlayerGui:GetDescendants()) do
         if d.Name == "SlotCards" and d:IsA("GuiObject") then cards = d end
         if d.Name == "CharacterSelect" and d:IsA("TextButton") then menuButton = d end
     end
-    if not (cards and shownOnScreen(cards)) then
+    local cardsShown = cards and shownOnScreen(cards)
+    local menuShown = menuButton and shownOnScreen(menuButton)
+    watchStuck(cardsShown or menuShown)
+    if not cardsShown then
         -- title menu: press CHARACTER SELECT first so the slot cards open
         -- (the game only reacts once its menu data has loaded, so keep retrying)
-        if menuButton and shownOnScreen(menuButton) and once("charSelect", 3) then
+        if menuShown and once("charSelect", 3) then
             press(menuButton)
             ui.slotStatus.Text = "Opening Character Select…"
         end
