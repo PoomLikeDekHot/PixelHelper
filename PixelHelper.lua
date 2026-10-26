@@ -1654,11 +1654,20 @@ local LOBBY_COOLDOWN = 8
 -- character select screen: PlayerGui … SlotCards / Slot<n> / … / Action (the card button the game listens to)
 local function trySelectSlot()
     if not settings.autoSlot or LocalPlayer:GetAttribute("RPGGameplayReady") == true then return end
-    local cards
+    local cards, menuButton
     for _, d in ipairs(PlayerGui:GetDescendants()) do
-        if d.Name == "SlotCards" and d:IsA("GuiObject") then cards = d break end
+        if d.Name == "SlotCards" and d:IsA("GuiObject") then cards = d end
+        if d.Name == "CharacterSelect" and d:IsA("TextButton") then menuButton = d end
     end
-    if not (cards and shownOnScreen(cards)) then return end
+    if not (cards and shownOnScreen(cards)) then
+        -- title menu: press CHARACTER SELECT first so the slot cards open
+        -- (the game only reacts once its menu data has loaded, so keep retrying)
+        if menuButton and shownOnScreen(menuButton) and once("charSelect", 3) then
+            press(menuButton)
+            ui.slotStatus.Text = "Opening Character Select…"
+        end
+        return
+    end
     local slotFrame = cards:FindFirstChild("Slot" .. settings.slot, true)
     local action = slotFrame and slotFrame:FindFirstChild("Action", true)
     if not (action and action:IsA("TextButton")) then
