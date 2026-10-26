@@ -130,6 +130,7 @@ local settings = {
     tab = 1,
     -- lobby
     mode = 1, diff = { 1, 1 }, act = 1, tier = 1, auto = false,
+    autoSlot = false, slot = 1, -- pick this character on the select screen
     -- combat
     combat = false, autoAttack = true, perfectAttack = true, hideMinigame = true,
     perfectDodge = true, autoGuard = true,
@@ -925,6 +926,14 @@ local lobbyStatus = label(statusRow, "", 11, T.muted, FONT, { Size = UDim2.new(1
 local startNow = primaryButton(statusRow, "Start Now", 100)
 footerNote(launchCard, "After a run, the Run tab decides Replay, Next or Castle.")
 
+local slotCard = card(lobbyR, 2, "☺", T.violet, "Auto Select Character", "Pick a character slot when the game opens", "autoSlot")
+local slotRow = row(slotCard, "Character slot", "Slot 1 is the left card")
+stepper(slotRow, function() return settings.slot end, function(v) settings.slot = v; save() end, 1, 1, 10, "Slot %d")
+local slotStatus = valueRow(slotCard, "Status")
+slotStatus.Text = "—"
+footerNote(slotCard, "Only presses a slot that already has a character. Empty or locked slots are skipped.")
+ui.slotStatus = slotStatus
+
 function refreshLobby()
     local mode = MODES[settings.mode]
     refreshMode()
@@ -1284,6 +1293,31 @@ end
 ---------------------------------------------------------------- LOBBY LOGIC
 local lastLobbyFire = 0
 local LOBBY_COOLDOWN = 8
+
+-- character select screen: PlayerGui … SlotCards / Slot<n> / … / Action (the card button the game listens to)
+local function trySelectSlot()
+    if not settings.autoSlot or LocalPlayer:GetAttribute("RPGGameplayReady") == true then return end
+    local cards
+    for _, d in ipairs(PlayerGui:GetDescendants()) do
+        if d.Name == "SlotCards" and d:IsA("GuiObject") then cards = d break end
+    end
+    if not (cards and shownOnScreen(cards)) then return end
+    local slotFrame = cards:FindFirstChild("Slot" .. settings.slot, true)
+    local action = slotFrame and slotFrame:FindFirstChild("Action", true)
+    if not (action and action:IsA("TextButton")) then
+        ui.slotStatus.Text = "Slot " .. settings.slot .. " not found"
+        return
+    end
+    local text = string.upper(action.Text)
+    if text:find("NEW CHARACTER", 1, true) or text:find("LOCKED", 1, true) or action:GetAttribute("Enabled") == false then
+        ui.slotStatus.Text = "Slot " .. settings.slot .. " is empty or locked"
+        return
+    end
+    if once("slot:" .. settings.slot, 6) then
+        press(action)
+        ui.slotStatus.Text = "Selected slot " .. settings.slot
+    end
+end
 
 local function canStart()
     if workspace:GetAttribute("PBAdventureServer") == true then return false, "In the adventure server" end
@@ -2050,6 +2084,7 @@ renderBagNames()
 task.spawn(function()
     local lastClick, lastSync, lastRunSync, lastSell = 0, 0, 0, 0
     while alive() and gui.Parent do
+        pcall(trySelectSlot)
         -- lobby auto start
         if settings.auto and os.clock() - lastLobbyFire >= LOBBY_COOLDOWN then
             local ok, why = canStart()
