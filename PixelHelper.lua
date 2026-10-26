@@ -2037,7 +2037,7 @@ function renderBagNames()
     end
     table.sort(names)
     if #names == 0 then
-        row(ui.bagList, profile and "Bag is empty" or "Waiting for your bag…", profile and nil or "It loads after the next loot or menu update")
+        row(ui.bagList, profile and "Bag is empty" or "Waiting for your bag…", profile and nil or "Loads a few seconds after you reach the lobby")
         return
     end
     local rarityColor = {}
@@ -2083,15 +2083,24 @@ end -- AUTO SELL LOGIC
 -- Blacksmith hone: ProfileRequest:InvokeServer("Village", { action = "hone", item = <gear uid>, hero = <heroSlot> })
 -- reply { ok, profile, message = "SUCCESS! …" | "FAILED! …" }
 local forgeTick -- set below
+local villageBusy = false -- the Village service answers "One thing at a time." to overlapping requests
 do
-local PixelIcons -- the game's own pixel-art drawer (PlayerScripts.PlatformBattlesClient.PixelIcons)
+-- the game's own pixel-art drawer (PlayerScripts.PlatformBattlesClient.PixelIcons).
+-- Loaded in the background so a slow require can never stall the UI; tiles show a letter until it's ready.
+local PixelIcons, iconsLoading = nil, false
 local function pixelIcons()
-    if PixelIcons == nil then
-        PixelIcons = false
-        pcall(function()
-            local client = LocalPlayer:WaitForChild("PlayerScripts", 5):FindFirstChild("PlatformBattlesClient", true)
-            local mod = client and client:FindFirstChild("PixelIcons")
-            if mod then PixelIcons = require(mod) end
+    if PixelIcons == nil and not iconsLoading then
+        iconsLoading = true
+        task.spawn(function()
+            local ok, mod = pcall(function()
+                local scripts = LocalPlayer:WaitForChild("PlayerScripts", 10)
+                local found = scripts and scripts:FindFirstChild("PixelIcons", true)
+                if not found then found = ReplicatedStorage:FindFirstChild("PixelIcons", true) end
+                return found and found:IsA("ModuleScript") and require(found) or nil
+            end)
+            PixelIcons = (ok and type(mod) == "table" and mod.Draw) and mod or false
+            if not ok then warn("[PixelHelper] PixelIcons: " .. tostring(mod)) end
+            if PixelIcons then renderForge(true) end -- redraw with real pictures
         end)
     end
     return PixelIcons or nil
@@ -2152,16 +2161,34 @@ local function drawPicture(parent, entry)
         })
         return
     end
-    pcall(function()
+    local ok, err = pcall(function()
         local name, palette = PI.GearIcon(entry.desc, entry.kind)
         local unit = PI.FitUnit(name, 52, 4)
         local w, h = PI.Size(name, unit)
         local holder = new("Frame", {
             Parent = parent, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(w, h),
+            Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(w, h), ZIndex = parent.ZIndex + 1,
         })
-        PI.Draw(holder, name, unit, { zIndex = parent.ZIndex + 1, palette = palette })
+        -- same call the game's forge list uses: drawn on a later frame, then the sprite is
+        -- anchored to the bottom-centre of its holder
+        local opts = { zIndex = parent.ZIndex + 1, palette = palette }
+        local function place(sprite)
+            if type(sprite) == "table" and typeof(sprite.container) == "Instance" then
+                sprite.container.Position = UDim2.new(0.5, 0, 1, 0)
+            end
+        end
+        if PI.DrawLater then
+            PI.DrawLater(holder, name, unit, opts, place)
+        else
+            task.spawn(function() place(PI.Draw(holder, name, unit, opts)) end)
+        end
     end)
+    if not ok then
+        warn("[PixelHelper] gear picture: " .. tostring(err))
+        label(parent, string.sub(entry.kind or "?", 1, 1), 22, RARITY_COLOR[entry.rarity] or T.text, FONT_BOLD, {
+            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
+        })
+    end
 end
 
 local MAX_TILES = 60
@@ -2211,7 +2238,7 @@ function renderForge(force)
                 Parent = tile, BackgroundColor3 = T.bg, BorderSizePixel = 0,
                 Position = UDim2.fromOffset(10, 8), Size = UDim2.new(1, -20, 0, 60), ZIndex = 2,
             }, { corner(10) })
-            drawPicture(pic, e)
+            pcall(drawPicture, pic, e)
             label(tile, "+" .. e.plus, 11, e.plus >= maxPlus() and T.amber or T.text, FONT_BOLD, {
                 Position = UDim2.fromOffset(14, 10), Size = UDim2.fromOffset(30, 14), ZIndex = 5,
             })
@@ -2243,7 +2270,7 @@ function renderForge(force)
         end
     end
     if not profile then
-        f.empty.Text = "Waiting for your bag… it loads after the next loot or menu update."
+        f.empty.Text = "Waiting for your bag… it loads a few seconds after you reach the lobby."
     elseif shown == 0 then
         f.empty.Text = settings.forgeFilter == 3 and "Nothing ticked yet. Switch to All and tap a picture." or "No gear here."
     else
@@ -2251,7 +2278,6 @@ function renderForge(force)
     end
 end
 
-local forgeBusy = false
 
 -- next ticked piece we can afford, or nil + reason
 local function nextForge()
@@ -2280,7 +2306,7 @@ end
 local function hone(e)
     local req = Remotes:FindFirstChild("ProfileRequest")
     if not req then ui.forge.status.Text = "Blacksmith not available here" return end
-    forgeBusy = true
+    villageBusy = true
     local before = e.plus
     local ok, result = pcall(function()
         return req:InvokeServer("Village", {
@@ -2288,13 +2314,17 @@ local function hone(e)
             hero = profile and profile.heroSlot ~= nil and tostring(profile.heroSlot) or nil,
         })
     end)
-    forgeBusy = false
+    villageBusy = false
     if not ok or type(result) ~= "table" then
         ui.forge.status.Text = "No answer from the server"
         return
     end
-    if type(result.profile) == "table" then profile = result.profile end
-    local msg = tostring(result.message or (result.ok == false and "Refused" or "Done"))
+    if type(result.profile) == "table" then
+        profile = result.profile
+        refreshSellPreview()
+        renderBagNames()
+    end
+    local msg = tostring(result.message or result.error or (result.ok == false and "Refused" or "Done"))
     local success = msg:sub(1, 8) == "SUCCESS!"
     ui.forge.status.Text = string.format("%s +%d: %s", e.name, before, success and "success" or (msg:sub(1, 7) == "FAILED!" and "failed" or msg))
     renderForge()
@@ -2302,7 +2332,7 @@ end
 
 local lastHone = 0
 function forgeTick()
-    if not (settings.autoForge and profile) or forgeBusy then return end
+    if not (settings.autoForge and profile) or villageBusy then return end
     if battle or inAdventure() then return end
     if os.clock() - lastHone < 1.2 then return end
     local e, why = nextForge()
@@ -2312,13 +2342,65 @@ function forgeTick()
 end
 
 ui.forge.onceBtn.MouseButton1Click:Connect(function()
-    if forgeBusy then return end
+    if villageBusy then return end
     if not profile then ui.forge.status.Text = "No bag data yet" return end
     local e, why = nextForge()
     if not e then ui.forge.status.Text = why return end
     task.spawn(hone, e)
 end)
 end -- AUTO FORGE LOGIC
+
+---------------------------------------------------------------- PROFILE (bag, gold, whetstones)
+-- The game only pushes "Profile" after loot or menus, so once the lobby screen is up we ask the
+-- Village service ourselves: ProfileRequest:InvokeServer("Village", { action = "status" }) -> { profile = … }.
+-- During a battle it answers { ok = false, status = "Busy" }; overlapping calls get "One thing at a time."
+local setProfile, requestProfile
+do
+local function looksLikeProfile(t)
+    return type(t) == "table" and t.gold ~= nil and (t.inventory ~= nil or t.gearBag ~= nil)
+end
+
+-- search a few levels deep in case the reply shape changes
+local function findProfile(data, depth, seen)
+    depth, seen = depth or 0, seen or {}
+    if type(data) ~= "table" or depth > 5 or seen[data] then return nil end
+    seen[data] = true
+    if looksLikeProfile(data.profile) then return data.profile end
+    if looksLikeProfile(data) then return data end
+    for _, v in pairs(data) do
+        local found = findProfile(v, depth + 1, seen)
+        if found then return found end
+    end
+end
+
+function setProfile(p)
+    profile = p
+    refreshSellPreview()
+    renderBagNames()
+    renderForge()
+end
+
+local lastAsk = -math.huge
+function requestProfile(force)
+    if villageBusy then return end
+    if not force and os.clock() - lastAsk < (profile and 30 or 6) then return end
+    if LocalPlayer:GetAttribute("RPGGameplayReady") ~= true or LocalPlayer:GetAttribute("PBProfileGate") == true then return end
+    if battle or inBattleNow() then return end
+    local req = Remotes:FindFirstChild("ProfileRequest")
+    if not req then return end
+    lastAsk, villageBusy = os.clock(), true
+    task.spawn(function()
+        local ok, res = pcall(function() return req:InvokeServer("Village", { action = "status" }) end)
+        villageBusy = false
+        local p = ok and findProfile(res)
+        if p then
+            setProfile(p)
+        elseif ok and type(res) == "table" and res.ok == false then
+            lastAsk = os.clock() - (profile and 30 or 6) + 6 -- busy / one thing at a time: try again in ~6s
+        end
+    end)
+end
+end -- PROFILE
 
 ---------------------------------------------------------------- events
 RPGState.OnClientEvent:Connect(function(name, data)
@@ -2353,10 +2435,7 @@ RPGState.OnClientEvent:Connect(function(name, data)
     elseif name == "Profile" and type(data) == "table" then
         local p = data.profile or data
         if type(p) == "table" and (p.gearBag or p.gear) then
-            profile = p
-            refreshSellPreview()
-            renderBagNames()
-            renderForge()
+            setProfile(p)
         end
     elseif name == "LightDialogue" and R.runOn("autoDeath") then
         local payload = type(data) == "table" and data or {}
@@ -2406,6 +2485,7 @@ task.spawn(function()
             lastSell = os.clock()
             pcall(sellNow, false)
         end
+        pcall(requestProfile)
         pcall(forgeTick)
         if (battle or inBattleNow()) and settings.combat then setLive("In battle", true)
         elseif inAdventure() and settings.autoRun then setLive("Run: " .. tostring(run and run.phase or "syncing"), true)
