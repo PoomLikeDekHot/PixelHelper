@@ -158,6 +158,10 @@ local settings = {
     -- auto forge (Blacksmith "hone")
     autoForge = false, forgeTarget = 5, forgeReserve = 0, forgeFilter = 1,
     forgePick = {}, -- [gear uid] = true
+    -- pets (Ranch + Candy Witch)
+    autoHatch = false, hatchEggs = {},             -- [egg item id] = true
+    autoRelease = false, releaseRarity = { Common = true }, releaseKeepLevel = 0,
+    autoCandyEgg = false, candyKeep = 0,           -- buy Haunted Eggs while candy stays above this
     -- window
     winW = 820, winH = 520,
 }
@@ -188,6 +192,8 @@ do -- fill in anything added since the last save
     end
     if type(settings.keepNames) ~= "table" then settings.keepNames = {} end
     if type(settings.forgePick) ~= "table" then settings.forgePick = {} end
+    if type(settings.hatchEggs) ~= "table" then settings.hatchEggs = {} end
+    if type(settings.releaseRarity) ~= "table" then settings.releaseRarity = { Common = true } end
 end
 
 local saveQueued = false
@@ -203,9 +209,11 @@ local function save()
 end
 
 ---------------------------------------------------------------- class + skills
-local GameConfig, GearConfig
+local GameConfig, GearConfig, PetConfig, HalloweenConfig
 pcall(function() GameConfig = require(Shared:WaitForChild("GameConfig", 5)) end)
 pcall(function() GearConfig = require(Shared:WaitForChild("GearConfig", 5)) end)
+pcall(function() PetConfig = require(Shared:WaitForChild("PetConfig", 5)) end)
+pcall(function() HalloweenConfig = require(Shared:WaitForChild("HalloweenConfig", 5)) end)
 
 local function myClass()
     return tostring(LocalPlayer:GetAttribute("RPGClass") or "Unknown")
@@ -518,6 +526,7 @@ local ICON_KEYS = {
     ["Events"] = "nodeMystery", ["Flow"] = "nodeTreasure", ["When a Run Ends"] = "nodeRest",
     ["Gear Types"] = "pouch", ["Rarity"] = "star", ["Never Sell"] = "heart", ["In Your Bag"] = "pouch",
     ["Pick Gear"] = "sword", ["Window"] = "book", ["Files"] = "blueprint", ["Unload"] = "skull",
+    ["Pets"] = "paw", ["Auto Hatch"] = "star", ["Haunted Egg"] = "candy", ["Auto Release"] = "paw", ["Your Pets"] = "heart",
 }
 
 -- draws art `key` centred in `parent`, as large as fits in `size` px. returns the holder or nil
@@ -937,6 +946,7 @@ local combatL, combatR = addTab("Automation", "◆", "Auto Farm", "Battle: attac
 local runL, runR       = addTab(nil, "↗", "Run", "Map paths, events and what happens when a run ends")
 local sellL, sellR     = addTab("Items", "$", "Auto Sell", "Sell gear you don't want, keep what you name")
 local forgeL, forgeR   = addTab(nil, "⚒", "Auto Forge", "Tick gear pictures and hone them to a target +")
+local petL, petR       = addTab(nil, "♣", "Pets", "Hatch eggs, release pets, buy Haunted Eggs")
 local setL, setR       = addTab("App", "≡", "Settings", "Window, files and unloading")
 
 ---------------------------------------------------------------- LOBBY TAB
@@ -1559,6 +1569,56 @@ new("UIPadding", { Parent = emptyText, PaddingLeft = UDim.new(0, 16), PaddingRig
 ui.forge = { gold = goldText, stones = stoneText, status = statusText, onceBtn = onceBtn, grid = grid, empty = emptyText }
 end -- AUTO FORGE TAB
 
+---------------------------------------------------------------- PETS TAB
+local renderPets = function() end -- set by the pets logic
+
+do
+local hatchCard = card(petL, 1, "◎", T.green, "Auto Hatch", "Hatches the ticked eggs while the ranch has room", "autoHatch")
+local hatchStatus = valueRow(hatchCard, "Status")
+hatchStatus.Text = "—"
+local ranchText = valueRow(hatchCard, "Ranch")
+ranchText.Text = "—"
+sectionLabel(hatchCard, "Eggs to hatch")
+local eggList = new("Frame", {
+    Parent = hatchCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+}, { vlist(0) })
+local hatchFoot = footerNote(hatchCard, "Eggs rarer than your ranch allows are skipped. Release or upgrade the ranch when it is full.")
+hatchFoot.LayoutOrder = 60
+
+local candyCard = card(petL, 2, "♦", T.amber, "Haunted Egg", "Candy Witch: buy Haunted Eggs with candy", "autoCandyEgg")
+local candyText = valueRow(candyCard, "Candy", T.amber)
+candyText.Text = "—"
+local candyStatus = valueRow(candyCard, "Status")
+candyStatus.Text = "—"
+sliderRow(candyCard, "Keep candy above", "Stops buying before candy drops below this", "candyKeep", 0, 20000, 100, "%d")
+footerNote(candyCard, "Each Haunted Egg costs 220 candy. Only while the Halloween stall is open; you can hold 99 eggs.")
+
+local releaseCard = card(petR, 1, "✕", T.pink, "Auto Release", "Lets go of pets of the ticked rarities", "autoRelease")
+local releaseStatus = valueRow(releaseCard, "Status")
+releaseStatus.Text = "—"
+sectionLabel(releaseCard, "Release these rarities")
+for _, id in ipairs({ "Common", "Uncommon", "Rare", "Legendary", "Divine", "Mythic" }) do
+    local r = row(releaseCard, id, nil)
+    checkbox(r, function() return settings.releaseRarity[id] == true end, function()
+        settings.releaseRarity[id] = (not settings.releaseRarity[id]) or nil
+        save(); renderPets()
+    end)
+end
+sliderRow(releaseCard, "Keep from level", "Never release a pet at or above this level", "releaseKeepLevel", 0, 100, 1, "Lv %d", "Off")
+footerNote(releaseCard, "Locked pets, your active pet and bound pets (Mochi, Party Slime) are never released.")
+
+local petsCard = card(petR, 2, "♥", T.violet, "Your Pets", "What is in the ranch right now")
+local petList = new("Frame", {
+    Parent = petsCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+}, { vlist(0) })
+
+ui.pets = {
+    hatchStatus = hatchStatus, ranch = ranchText, eggList = eggList,
+    candy = candyText, candyStatus = candyStatus,
+    releaseStatus = releaseStatus, petList = petList,
+}
+end -- PETS TAB
+
 ---------------------------------------------------------------- SETTINGS TAB
 do
 local winCard = card(setL, 1, "▢", T.accent, "Window", "Size and visibility")
@@ -1651,6 +1711,8 @@ local function inBattleNow()
 end
 
 ---------------------------------------------------------------- LOBBY LOGIC
+local L = {} -- lobby functions the event loop calls
+do
 local lastLobbyFire = 0
 local LOBBY_COOLDOWN = 8
 
@@ -1742,6 +1804,15 @@ ui.startNow.MouseButton1Click:Connect(function()
     if not ok then ui.lobbyStatus.Text = why return end
     fireStart()
 end)
+
+L.trySelectSlot = trySelectSlot
+-- auto start: fires when the cooldown has passed and the lobby is ready
+function L.autoStart()
+    if os.clock() - lastLobbyFire < LOBBY_COOLDOWN then return end
+    local ok, why = canStart()
+    if ok then fireStart() else ui.lobbyStatus.Text = "Auto Start: " .. why end
+end
+end -- LOBBY LOGIC
 
 ---------------------------------------------------------------- COMBAT LOGIC
 local battle, battleAt = nil, 0
@@ -2700,6 +2771,7 @@ function setProfile(p)
     refreshSellPreview()
     renderBagNames()
     renderForge()
+    renderPets()
 end
 
 local lastAsk = -math.huge
@@ -2723,6 +2795,225 @@ function requestProfile(force)
     end)
 end
 end -- PROFILE
+
+---------------------------------------------------------------- PETS LOGIC
+-- Ranch:  RPGCommand:FireServer("Ranch", { action = "hatch", itemId = <egg item> })
+--         RPGCommand:FireServer("Ranch", { action = "release", petId = <pet id> })
+-- Candy:  ProfileRequest:InvokeServer("Village", { action = "candy_buy", item = "EggHaunted", hero = <heroSlot> })
+-- profile.pets = { { id, s = species, r = rarity index, lv, locked } }, profile.petId = active pet,
+-- profile.ranch = ranch tier, profile.inventory[<egg item>] / [HarvestCandy] = counts
+local petTick -- set below
+do
+local HAUNTED_EGG, EGG_PRICE, EGG_MAX = "EggHaunted", 220, 99
+local RARITY_NAMES = { "Common", "Uncommon", "Rare", "Legendary", "Divine", "Mythic" }
+local RARITY_COLORS = {
+    Color3.fromRGB(205, 207, 199), Color3.fromRGB(110, 210, 110), Color3.fromRGB(90, 160, 255),
+    Color3.fromRGB(255, 176, 50), Color3.fromRGB(255, 110, 200), Color3.fromRGB(255, 214, 90),
+}
+
+local function inv() return profile and type(profile.inventory) == "table" and profile.inventory or {} end
+local function count(id) return math.max(0, math.floor(tonumber(inv()[id]) or 0)) end
+local function candy() return count(HalloweenConfig and HalloweenConfig.CandyId or "HarvestCandy") end
+
+local function pets()
+    local out = {}
+    for _, p in ipairs(profile and type(profile.pets) == "table" and profile.pets or {}) do
+        if type(p) == "table" and p.id ~= nil then table.insert(out, p) end
+    end
+    return out
+end
+
+local function ranch()
+    local tiers = PetConfig and PetConfig.Ranch or {}
+    local tier = math.clamp(math.floor(tonumber(profile and profile.ranch) or 1), 1, math.max(1, #tiers))
+    return tiers[tier] or { slots = 0, maxRarity = 1 }
+end
+
+-- every egg the game knows: { id, name, rarityIndex, odds }
+local eggDefs
+local function eggs()
+    if eggDefs then return eggDefs end
+    eggDefs = {}
+    local defs = {}
+    pcall(function() defs = PetConfig.ItemDefinitions() end)
+    for id, d in pairs(defs) do
+        local e = PetConfig.EggByItem[id]
+        local shown = 1
+        pcall(function() shown = PetConfig.EggShownRarity(e) end)
+        table.insert(eggDefs, {
+            id = id, name = d.name or id, rarityIndex = PetConfig.RarityIndex[e and e.rarity or ""] or 1,
+            shown = shown, special = PetConfig.EggOdds and PetConfig.EggOdds[id] ~= nil,
+        })
+    end
+    table.sort(eggDefs, function(a, b)
+        if a.shown ~= b.shown then return a.shown < b.shown end
+        return a.name < b.name
+    end)
+    return eggDefs
+end
+
+local function speciesName(p)
+    local s = PetConfig and PetConfig.Species and PetConfig.Species[tostring(p.s)]
+    return s and s.name or tostring(p.s or "Pet")
+end
+
+local function isBound(p)
+    local ok, b = pcall(function() return PetConfig.Bound(p) end)
+    return ok and b == true
+end
+
+local function canRelease(p)
+    if p.locked or p.id == (profile and profile.petId) or isBound(p) then return false end
+    local rarity = RARITY_NAMES[tonumber(p.r) or 1]
+    if not settings.releaseRarity[rarity or ""] then return false end
+    if settings.releaseKeepLevel > 0 and (tonumber(p.lv) or 1) >= settings.releaseKeepLevel then return false end
+    return true
+end
+
+local function drawIcon(parent, key, fallback, color)
+    local holder = Icons.draw(parent, key, 30, nil, 3)
+    if not holder then
+        label(parent, fallback, 15, color or T.muted, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3 })
+    end
+end
+
+function renderPets()
+    local P = ui.pets
+    local r = ranch()
+    local list = pets()
+    P.ranch.Text = profile and string.format("%d / %d pets  ·  hatches up to %s", #list, r.slots or 0, RARITY_NAMES[r.maxRarity or 1] or "?") or "—"
+    P.candy.Text = profile and tostring(candy()) or "—"
+
+    -- egg list: picture, name, owned count, tick to hatch
+    for _, c in ipairs(P.eggList:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+    P.eggList:SetAttribute("rows", 0)
+    local any = false
+    for _, e in ipairs(eggs()) do
+        local owned = count(e.id)
+        if owned > 0 or settings.hatchEggs[e.id] then
+            any = true
+            local rr = row(P.eggList, nil, nil, 46)
+            local pic = new("Frame", { Parent = rr, BackgroundColor3 = T.bg, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, -17), Size = UDim2.fromOffset(34, 34), ZIndex = 2 }, { corner(8) })
+            drawIcon(pic, e.id, "E", RARITY_COLORS[e.shown])
+            label(rr, e.name, 12, RARITY_COLORS[e.shown] or T.text, FONT_SEMI, { Position = UDim2.fromOffset(44, 6), Size = UDim2.new(1, -90, 0, 18) })
+            local tooRare = not e.special and e.rarityIndex > (r.maxRarity or 1)
+            label(rr, "x" .. owned .. (tooRare and "  ·  ranch too small" or ""), 10, tooRare and T.red or T.muted, FONT, {
+                Position = UDim2.fromOffset(44, 24), Size = UDim2.new(1, -90, 0, 14),
+            })
+            checkbox(rr, function() return settings.hatchEggs[e.id] == true end, function()
+                settings.hatchEggs[e.id] = (not settings.hatchEggs[e.id]) or nil
+                save()
+            end)
+        end
+    end
+    if not any then
+        local rr = row(P.eggList, nil, nil, 34)
+        label(rr, profile and "You have no eggs right now." or "Waiting for your bag…", 12, T.faint, FONT, { Size = UDim2.fromScale(1, 1) })
+    end
+
+    -- pets list
+    for _, c in ipairs(P.petList:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+    P.petList:SetAttribute("rows", 0)
+    table.sort(list, function(a, b)
+        if (a.r or 1) ~= (b.r or 1) then return (a.r or 1) > (b.r or 1) end
+        return (a.lv or 1) > (b.lv or 1)
+    end)
+    for i, p in ipairs(list) do
+        if i > 40 then break end
+        local rarity = tonumber(p.r) or 1
+        local rr = row(P.petList, nil, nil, 40)
+        local pic = new("Frame", { Parent = rr, BackgroundColor3 = T.bg, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, -15), Size = UDim2.fromOffset(30, 30), ZIndex = 2 }, { corner(8) })
+        drawIcon(pic, "paw", "P", RARITY_COLORS[rarity])
+        label(rr, speciesName(p), 12, RARITY_COLORS[rarity] or T.text, FONT_SEMI, { Position = UDim2.fromOffset(40, 4), Size = UDim2.new(1, -110, 0, 16) })
+        label(rr, (RARITY_NAMES[rarity] or "?") .. "  ·  Lv " .. tostring(p.lv or 1), 10, T.muted, FONT, { Position = UDim2.fromOffset(40, 21), Size = UDim2.new(1, -110, 0, 14) })
+        local tag = (p.id == profile.petId and "ACTIVE") or (p.locked and "LOCKED") or (isBound(p) and "BOUND") or (canRelease(p) and "RELEASE") or ""
+        label(rr, tag, 10, tag == "RELEASE" and T.red or T.green, FONT_BOLD, {
+            AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0, 70, 1, 0), TextXAlignment = Enum.TextXAlignment.Right,
+        })
+    end
+    if #list == 0 then
+        local rr = row(P.petList, nil, nil, 34)
+        label(rr, profile and "No pets yet." or "Waiting for your bag…", 12, T.faint, FONT, { Size = UDim2.fromScale(1, 1) })
+    end
+end
+
+local lastAction = 0
+
+local function refreshSoon()
+    task.delay(1.5, function() requestProfile(true) end)
+end
+
+local function tryRelease()
+    if not settings.autoRelease then return false end
+    for _, p in ipairs(pets()) do
+        if canRelease(p) and once("release:" .. tostring(p.id), 6) then
+            RPGCommand:FireServer("Ranch", { action = "release", petId = p.id })
+            ui.pets.releaseStatus.Text = string.format("Released %s (%s Lv %s)", speciesName(p), RARITY_NAMES[tonumber(p.r) or 1] or "?", tostring(p.lv or 1))
+            refreshSoon()
+            return true
+        end
+    end
+    ui.pets.releaseStatus.Text = "Nothing to release"
+    return false
+end
+
+local function tryHatch()
+    if not settings.autoHatch then return false end
+    local r = ranch()
+    if #pets() >= (r.slots or 0) then ui.pets.hatchStatus.Text = "Ranch full" return false end
+    for _, e in ipairs(eggs()) do
+        if settings.hatchEggs[e.id] and count(e.id) > 0 and (e.special or e.rarityIndex <= (r.maxRarity or 1)) then
+            if once("hatch:" .. e.id, 3) then
+                RPGCommand:FireServer("Ranch", { action = "hatch", itemId = e.id })
+                ui.pets.hatchStatus.Text = "Hatching " .. e.name
+                refreshSoon()
+                return true
+            end
+            return false
+        end
+    end
+    ui.pets.hatchStatus.Text = "No ticked eggs left"
+    return false
+end
+
+local function tryBuyEgg()
+    if not settings.autoCandyEgg or villageBusy then return false end
+    local open = true
+    pcall(function() open = HalloweenConfig.Active(workspace:GetServerTimeNow()) end)
+    if not open then ui.pets.candyStatus.Text = "Candy Witch stall is closed" return false end
+    if count(HAUNTED_EGG) >= EGG_MAX then ui.pets.candyStatus.Text = "Holding 99 eggs" return false end
+    if candy() - EGG_PRICE < settings.candyKeep then
+        ui.pets.candyStatus.Text = string.format("Stopped: keeping %d candy", settings.candyKeep)
+        return false
+    end
+    local req = Remotes:FindFirstChild("ProfileRequest")
+    if not req then return false end
+    villageBusy = true
+    task.spawn(function()
+        local ok, res = pcall(function()
+            return req:InvokeServer("Village", {
+                action = "candy_buy", item = HAUNTED_EGG,
+                hero = profile and profile.heroSlot ~= nil and tostring(profile.heroSlot) or nil,
+            })
+        end)
+        villageBusy = false
+        if ok and type(res) == "table" then
+            if type(res.profile) == "table" then setProfile(res.profile) end
+            ui.pets.candyStatus.Text = res.ok == false and tostring(res.message or "Refused") or "Bought a Haunted Egg"
+        else
+            ui.pets.candyStatus.Text = "No answer from the server"
+        end
+    end)
+    return true
+end
+
+function petTick()
+    if not profile or battle or inAdventure() then return end
+    if os.clock() - lastAction < 1.5 then return end
+    -- release first so a hatch has room; one action per tick
+    if tryRelease() or tryHatch() or tryBuyEgg() then lastAction = os.clock() end
+end
+end -- PETS LOGIC
 
 ---------------------------------------------------------------- events
 RPGState.OnClientEvent:Connect(function(name, data)
@@ -2773,16 +3064,13 @@ ui.fightKind.Text = "—"
 refreshSellPreview()
 renderBagNames()
 renderForge(true)
+renderPets()
 
 task.spawn(function()
     local lastClick, lastSync, lastRunSync, lastSell = 0, 0, 0, 0
     while alive() and gui.Parent do
-        pcall(trySelectSlot)
-        -- lobby auto start
-        if settings.auto and os.clock() - lastLobbyFire >= LOBBY_COOLDOWN then
-            local ok, why = canStart()
-            if ok then fireStart() else ui.lobbyStatus.Text = "Auto Start: " .. why end
-        end
+        pcall(L.trySelectSlot)
+        if settings.auto then pcall(L.autoStart) end
         -- in a run but no RunState yet (script loaded after it was sent): ask for it
         if settings.autoRun and inAdventure() and os.clock() - lastRunSync > 3 and (run == nil or os.clock() - runAt > 20) then
             lastRunSync = os.clock()
@@ -2809,6 +3097,7 @@ task.spawn(function()
         end
         pcall(requestProfile)
         pcall(forgeTick)
+        pcall(petTick)
         if (battle or inBattleNow()) and settings.combat then setLive("In battle", true)
         elseif inAdventure() and settings.autoRun then setLive("Run: " .. tostring(run and run.phase or "syncing"), true)
         elseif inAdventure() then setLive("Auto Run is off", false)
