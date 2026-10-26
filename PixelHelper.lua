@@ -154,6 +154,9 @@ local settings = {
     sellKinds = { Weapon = false, Helmet = false, Chest = false, Legs = false, Relic = false, Scroll = false },
     sellRarity = { Common = true, Uncommon = true, Rare = false, Epic = false, Legendary = false, Secret = false },
     keepNames = {}, -- [lowercase name] = true
+    -- auto forge (Blacksmith "hone")
+    autoForge = false, forgeTarget = 5, forgeReserve = 0, forgeFilter = 1,
+    forgePick = {}, -- [gear uid] = true
     -- window
     winW = 820, winH = 520,
 }
@@ -183,6 +186,7 @@ do -- fill in anything added since the last save
         if settings.sellRarity[r.id] == nil then settings.sellRarity[r.id] = false end
     end
     if type(settings.keepNames) ~= "table" then settings.keepNames = {} end
+    if type(settings.forgePick) ~= "table" then settings.forgePick = {} end
 end
 
 local saveQueued = false
@@ -293,9 +297,9 @@ local T = {
 }
 local LINE, LINE2 = 0.94, 0.89 -- white at 6% / 11%
 local R_CARD, R_CTL = 14, 10
-local FONT      = Enum.Font.Gotham
-local FONT_SEMI = Enum.Font.GothamMedium
-local FONT_BOLD = Enum.Font.GothamBold
+local FONT      = Font.new("rbxasset://fonts/families/Nunito.json", Enum.FontWeight.Bold)
+local FONT_SEMI = Font.new("rbxasset://fonts/families/Nunito.json", Enum.FontWeight.ExtraBold)
+local FONT_BOLD = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local EASE      = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local WHITE     = Color3.new(1, 1, 1)
 
@@ -319,7 +323,7 @@ local function tween(inst, props, info) TweenService:Create(inst, info or EASE, 
 local function label(parent, text, size, color, font, props)
     local l = new("TextLabel", {
         Parent = parent, BackgroundTransparency = 1, Text = text,
-        Font = font or FONT, TextSize = size or 13, TextColor3 = color or T.text,
+        FontFace = font or FONT, TextSize = size or 13, TextColor3 = color or T.text,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
     })
     for k, v in pairs(props or {}) do l[k] = v end
@@ -360,7 +364,7 @@ end
 local function checkbox(parent, get, onToggle)
     local b = new("TextButton", {
         Parent = parent, AutoButtonColor = false, Text = "", BorderSizePixel = 0, BackgroundColor3 = T.raised,
-        Font = FONT_BOLD, TextSize = 13, TextColor3 = T.bg,
+        FontFace = FONT_BOLD, TextSize = 13, TextColor3 = T.bg,
     }, { corner(6) })
     rightAnchor(b, 20, 20)
     local st = line(LINE2); st.Parent = b
@@ -386,7 +390,7 @@ local function segmented(parent, items, getIndex, onPick)
         local b = new("TextButton", {
             Parent = bar, AutoButtonColor = false, BackgroundTransparency = 1, ZIndex = 2,
             Size = UDim2.new(1 / #items, 0, 1, 0), Position = UDim2.new((i - 1) / #items, 0, 0, 0),
-            Text = item, Font = FONT_SEMI, TextSize = 12, TextColor3 = T.muted,
+            Text = item, FontFace = FONT_SEMI, TextSize = 12, TextColor3 = T.muted,
         })
         buttons[i] = b
         b.MouseEnter:Connect(function() if getIndex() ~= i then b.TextColor3 = T.text end end)
@@ -399,7 +403,7 @@ local function segmented(parent, items, getIndex, onPick)
         if instant then pill.Position = pos else tween(pill, { Position = pos }) end
         for j, b in ipairs(buttons) do
             b.TextColor3 = (j == i) and T.text or T.muted
-            b.Font = (j == i) and FONT_BOLD or FONT_SEMI
+            b.FontFace = (j == i) and FONT_BOLD or FONT_SEMI
         end
     end
     refresh(true)
@@ -412,13 +416,13 @@ local function stepper(parent, get, set, step, min, max, fmt)
     rightAnchor(box, 80, 26)
     local txt = new("TextBox", {
         Parent = box, BackgroundTransparency = 1, ClearTextOnFocus = false,
-        Size = UDim2.new(1, -20, 1, 0), Font = FONT_SEMI, TextSize = 12, TextColor3 = T.text, Text = "",
+        Size = UDim2.new(1, -20, 1, 0), FontFace = FONT_SEMI, TextSize = 12, TextColor3 = T.text, Text = "",
     })
     local function btn(text, y)
         return new("TextButton", {
             Parent = box, AutoButtonColor = false, BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -3, y, 0), Size = UDim2.new(0, 16, 0.5, 0),
-            Text = text, Font = FONT_BOLD, TextSize = 8, TextColor3 = T.muted,
+            Text = text, FontFace = FONT_BOLD, TextSize = 8, TextColor3 = T.muted,
         })
     end
     local up, down = btn("▲", 0), btn("▼", 0.5)
@@ -441,7 +445,7 @@ local function slider(parent, get, set, min, max, step, fmt, zeroText)
         return new("TextButton", {
             Parent = holder, AutoButtonColor = false, BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(right and 1 or 0, 0), Position = UDim2.new(right and 1 or 0, 0, 0, 0), Size = UDim2.fromOffset(16, 20),
-            Text = text, Font = FONT_BOLD, TextSize = 14, TextColor3 = T.muted,
+            Text = text, FontFace = FONT_BOLD, TextSize = 14, TextColor3 = T.muted,
         })
     end
     local minus, plus = sbtn("−", false), sbtn("+", true)
@@ -502,7 +506,7 @@ local function smallButton(parent, text, x)
         Parent = parent, AutoButtonColor = false, AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22),
         BackgroundColor3 = T.raised, BorderSizePixel = 0,
-        Text = text, Font = FONT_BOLD, TextSize = 9, TextColor3 = T.muted,
+        Text = text, FontFace = FONT_BOLD, TextSize = 9, TextColor3 = T.muted,
     }, { corner(6) })
     hoverFill(b, function() return T.raised end, T.raised2)
     return b
@@ -511,7 +515,7 @@ end
 local function primaryButton(parent, text, width)
     local b = new("TextButton", {
         Parent = parent, AutoButtonColor = false, BackgroundColor3 = T.accent, BorderSizePixel = 0,
-        Text = text, Font = FONT_BOLD, TextSize = 12, TextColor3 = T.bg,
+        Text = text, FontFace = FONT_BOLD, TextSize = 12, TextColor3 = T.bg,
     }, { corner(R_CTL) })
     rightAnchor(b, width or 100, 30)
     hoverFill(b, function() return T.accent end, T.accentT)
@@ -843,6 +847,7 @@ local lobbyL, lobbyR   = addTab("General", "▶", "Lobby", "Pick a stage and lau
 local combatL, combatR = addTab("Automation", "◆", "Auto Farm", "Battle: attack, dodge, skills, potions")
 local runL, runR       = addTab(nil, "↗", "Run", "Map paths, events and what happens when a run ends")
 local sellL, sellR     = addTab("Items", "$", "Auto Sell", "Sell gear you don't want, keep what you name")
+local forgeL, forgeR   = addTab(nil, "⚒", "Auto Forge", "Tick gear pictures and hone them to a target +")
 local setL, setR       = addTab("App", "≡", "Settings", "Window, files and unloading")
 
 ---------------------------------------------------------------- LOBBY TAB
@@ -906,7 +911,7 @@ local actButtons = {}
 for i = 1, MODES[1].acts do
     local b = new("TextButton", {
         Parent = actGrid, LayoutOrder = i, AutoButtonColor = false, BackgroundColor3 = T.raised, BorderSizePixel = 0,
-        Text = tostring(i), Font = FONT_SEMI, TextSize = 13, TextColor3 = T.text,
+        Text = tostring(i), FontFace = FONT_SEMI, TextSize = 13, TextColor3 = T.text,
     }, { corner(8) })
     actButtons[i] = b
     b.MouseEnter:Connect(function() if settings.act ~= i then b.BackgroundColor3 = T.raised2 end end)
@@ -948,7 +953,7 @@ function refreshLobby()
         local sel = (i == settings.act)
         b.BackgroundColor3 = sel and T.accent or T.raised
         b.TextColor3 = sel and T.bg or T.text
-        b.Font = sel and FONT_BOLD or FONT_SEMI
+        b.FontFace = sel and FONT_BOLD or FONT_SEMI
     end
     refreshTier()
     if refreshLaunchHead then refreshLaunchHead() end
@@ -1021,7 +1026,7 @@ reloadRow.LayoutOrder = 60
 local reloadBtn = new("TextButton", {
     Parent = reloadRow, AutoButtonColor = false, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
     Size = UDim2.fromOffset(120, 28), BackgroundColor3 = T.raised, BorderSizePixel = 0,
-    Text = "Reload skills", Font = FONT_SEMI, TextSize = 12, TextColor3 = T.text,
+    Text = "Reload skills", FontFace = FONT_SEMI, TextSize = 12, TextColor3 = T.text,
 }, { corner(R_CTL), line() })
 hoverFill(reloadBtn, function() return T.raised end, T.raised2)
 label(reloadRow, "New ones appear after a battle", 10, T.muted, FONT, { Position = UDim2.fromOffset(130, 0), Size = UDim2.new(1, -130, 1, 0) })
@@ -1147,7 +1152,7 @@ local keepBox = new("TextBox", {
     Parent = addRow, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
     AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, -86, 0, 30),
     PlaceholderText = "Type a name, e.g. Sunforged", PlaceholderColor3 = T.faint,
-    Text = "", Font = FONT, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "", FontFace = FONT, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left,
 }, { corner(R_CTL), line(LINE2), pad(0, 10, 0, 10) })
 local addBtn = primaryButton(addRow, "Keep", 76)
 local keepListFrame = new("Frame", {
@@ -1198,6 +1203,45 @@ renderKeep()
 ui.sellPreview, ui.sellStatus, ui.sellNowBtn, ui.bagList, ui.renderKeep =
     sellPreviewText, sellStatusText, sellNowBtn, bagListFrame, renderKeep
 end -- AUTO SELL TAB
+
+---------------------------------------------------------------- AUTO FORGE TAB
+local renderForge = function() end -- set by the forge logic
+
+do
+local forgeMaster = card(forgeL, 1, "⚒", T.amber, "Auto Forge", "Hones every ticked piece up to the target", "autoForge")
+sliderRow(forgeMaster, "Stop at", "Hone each ticked piece up to this +", "forgeTarget", 1, 10, 1, "+%d")
+sliderRow(forgeMaster, "Keep gold above", "Never spend gold below this", "forgeReserve", 0, 100000, 500, "%d")
+local goldText = valueRow(forgeMaster, "Gold", T.amber)
+local stoneText = valueRow(forgeMaster, "Whetstones")
+local statusText = valueRow(forgeMaster, "Last hone")
+statusText.Text = "—"
+local onceRow = row(forgeMaster, nil, nil, 50)
+label(onceRow, "From +5 a failed hone can drop the piece by 1.", 10, T.muted, FONT, {
+    Size = UDim2.new(1, -116, 1, 0), TextWrapped = true, TextTruncate = Enum.TextTruncate.None,
+})
+local onceBtn = primaryButton(onceRow, "Hone Once", 104)
+footerNote(forgeMaster, "Works in the lobby once the Blacksmith is repaired. Each hone costs 1 whetstone of the piece's rarity plus gold.")
+
+local pickCard = card(forgeR, 1, "▦", T.violet, "Pick Gear", "Tap a picture to tick it")
+do
+    local r = row(pickCard, nil, nil, 48)
+    local bar, refresh
+    bar, refresh = segmented(r, { "All", "Equipped", "Ticked" }, function() return settings.forgeFilter end, function(i)
+        settings.forgeFilter = i; save(); refresh(); renderForge(true)
+    end)
+    bar.Position = UDim2.new(0, 0, 0.5, -15)
+end
+local grid = new("Frame", {
+    Parent = pickCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+}, {
+    pad(8, 14, 16, 14),
+    new("UIGridLayout", { CellSize = UDim2.fromOffset(84, 116), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+})
+local emptyText = label(pickCard, "", 12, T.faint, FONT, { LayoutOrder = 60, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true })
+new("UIPadding", { Parent = emptyText, PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), PaddingBottom = UDim.new(0, 14) })
+
+ui.forge = { gold = goldText, stones = stoneText, status = statusText, onceBtn = onceBtn, grid = grid, empty = emptyText }
+end -- AUTO FORGE TAB
 
 ---------------------------------------------------------------- SETTINGS TAB
 do
@@ -1688,6 +1732,8 @@ end -- COMBAT LOGIC
 ---------------------------------------------------------------- RUN LOGIC
 local run         -- latest RunState
 local runAt = 0
+local R = {} -- run functions the event loop calls
+do
 
 local function runOn(key) return settings.autoRun and (key == nil or settings[key]) end
 
@@ -1904,6 +1950,9 @@ local function clickThrough()
     end
 end
 
+R.runOn, R.tickRun, R.clickThrough = runOn, tickRun, clickThrough
+end -- RUN LOGIC
+
 ---------------------------------------------------------------- AUTO SELL LOGIC
 local sellNow -- set below
 do
@@ -2030,6 +2079,247 @@ end
 ui.sellNowBtn.MouseButton1Click:Connect(function() sellNow(true) end)
 end -- AUTO SELL LOGIC
 
+---------------------------------------------------------------- AUTO FORGE LOGIC
+-- Blacksmith hone: ProfileRequest:InvokeServer("Village", { action = "hone", item = <gear uid>, hero = <heroSlot> })
+-- reply { ok, profile, message = "SUCCESS! …" | "FAILED! …" }
+local forgeTick -- set below
+do
+local PixelIcons -- the game's own pixel-art drawer (PlayerScripts.PlatformBattlesClient.PixelIcons)
+local function pixelIcons()
+    if PixelIcons == nil then
+        PixelIcons = false
+        pcall(function()
+            local client = LocalPlayer:WaitForChild("PlayerScripts", 5):FindFirstChild("PlatformBattlesClient", true)
+            local mod = client and client:FindFirstChild("PixelIcons")
+            if mod then PixelIcons = require(mod) end
+        end)
+    end
+    return PixelIcons or nil
+end
+
+local RARITY_ORDER, RARITY_COLOR = {}, {}
+for i, r in ipairs(RARITIES) do RARITY_ORDER[r.id], RARITY_COLOR[r.id] = i, r.color end
+
+local function maxPlus() return (GearConfig and tonumber(GearConfig.MaxPlus)) or 10 end
+
+local function whetstoneId(rarity)
+    local ok, w = pcall(function() return GearConfig.WhetstoneFor(rarity) end)
+    return ok and type(w) == "table" and w.id or nil
+end
+
+local function honeGold(rarity, plus)
+    local ok, g = pcall(function() return GearConfig.HoneGold(rarity, plus) end)
+    return ok and tonumber(g) or 0
+end
+
+local function stonesOf(id)
+    local inv = profile and type(profile.inventory) == "table" and profile.inventory or {}
+    return id and (tonumber(inv[id]) or 0) or 0
+end
+
+local function gold() return math.floor(tonumber(profile and profile.gold) or 0) end
+
+-- gear pieces in the bag: { uid, desc, raw, name, kind, rarity, plus, worn }
+local function forgeItems()
+    local out = {}
+    if not (profile and GearConfig and type(profile.gearBag) == "table") then return out end
+    local worn = {}
+    for _, uid in pairs(type(profile.gear) == "table" and profile.gear or {}) do worn[uid] = true end
+    for uid, raw in pairs(profile.gearBag) do
+        local ok, d = pcall(GearConfig.Describe, raw)
+        if ok and d then
+            table.insert(out, {
+                uid = uid, desc = d, name = d.name or "?", kind = d.gearKind, rarity = d.rarity,
+                plus = tonumber(d.plus) or 0, worn = worn[uid] == true,
+            })
+        end
+    end
+    table.sort(out, function(a, b)
+        if a.worn ~= b.worn then return a.worn end
+        local ra, rb = RARITY_ORDER[a.rarity] or 0, RARITY_ORDER[b.rarity] or 0
+        if ra ~= rb then return ra > rb end
+        if a.plus ~= b.plus then return a.plus > b.plus end
+        return a.name < b.name
+    end)
+    return out
+end
+
+local function drawPicture(parent, entry)
+    local PI = pixelIcons()
+    if not PI then
+        label(parent, string.sub(entry.kind or "?", 1, 1), 22, RARITY_COLOR[entry.rarity] or T.text, FONT_BOLD, {
+            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
+        })
+        return
+    end
+    pcall(function()
+        local name, palette = PI.GearIcon(entry.desc, entry.kind)
+        local unit = PI.FitUnit(name, 52, 4)
+        local w, h = PI.Size(name, unit)
+        local holder = new("Frame", {
+            Parent = parent, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(w, h),
+        })
+        PI.Draw(holder, name, unit, { zIndex = parent.ZIndex + 1, palette = palette })
+    end)
+end
+
+local MAX_TILES = 60
+local lastKey
+
+function renderForge(force)
+    local f = ui.forge
+    f.gold.Text = profile and tostring(gold()) or "—"
+    local items = forgeItems()
+
+    -- whetstones by rarity, e.g. "Common 3 · Rare 1"
+    local parts = {}
+    for _, r in ipairs(RARITIES) do
+        local n = stonesOf(whetstoneId(r.id))
+        if n > 0 then table.insert(parts, r.id .. " " .. n) end
+    end
+    f.stones.Text = #parts > 0 and table.concat(parts, " · ") or (profile and "none" or "—")
+
+    -- only rebuild the grid when something visible changed
+    local keyParts = { tostring(settings.forgeFilter) }
+    for _, e in ipairs(items) do
+        table.insert(keyParts, e.uid .. ":" .. e.plus .. (settings.forgePick[e.uid] and "*" or ""))
+    end
+    local key = table.concat(keyParts, ",")
+    if key == lastKey and not force then return end
+    lastKey = key
+
+    for _, c in ipairs(f.grid:GetChildren()) do
+        if c:IsA("GuiObject") then c:Destroy() end
+    end
+    local shown = 0
+    for _, e in ipairs(items) do
+        local ticked = settings.forgePick[e.uid] == true
+        local visible = settings.forgeFilter == 1 or (settings.forgeFilter == 2 and e.worn) or (settings.forgeFilter == 3 and ticked)
+        if visible and shown < MAX_TILES then
+            shown += 1
+            local rc = RARITY_COLOR[e.rarity] or T.text
+            local tile = new("TextButton", {
+                Parent = f.grid, LayoutOrder = shown, AutoButtonColor = false, Text = "",
+                BackgroundColor3 = ticked and T.raised2 or T.raised, BorderSizePixel = 0,
+            }, { corner(12) })
+            new("UIStroke", {
+                Parent = tile, ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                Color = ticked and T.accent or rc, Thickness = ticked and 2 or 1, Transparency = ticked and 0 or 0.6,
+            })
+            local pic = new("Frame", {
+                Parent = tile, BackgroundColor3 = T.bg, BorderSizePixel = 0,
+                Position = UDim2.fromOffset(10, 8), Size = UDim2.new(1, -20, 0, 60), ZIndex = 2,
+            }, { corner(10) })
+            drawPicture(pic, e)
+            label(tile, "+" .. e.plus, 11, e.plus >= maxPlus() and T.amber or T.text, FONT_BOLD, {
+                Position = UDim2.fromOffset(14, 10), Size = UDim2.fromOffset(30, 14), ZIndex = 5,
+            })
+            if e.worn then
+                label(tile, "E", 10, T.green, FONT_BOLD, {
+                    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 52), Size = UDim2.fromOffset(12, 12),
+                    TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 5,
+                })
+            end
+            if ticked then
+                local check = new("Frame", {
+                    Parent = tile, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -6, 0, 6),
+                    Size = UDim2.fromOffset(18, 18), BackgroundColor3 = T.accent, BorderSizePixel = 0, ZIndex = 6,
+                }, { corner(9) })
+                label(check, "✓", 11, T.bg, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 7 })
+            end
+            label(tile, e.name, 11, rc, FONT_SEMI, {
+                Position = UDim2.fromOffset(6, 72), Size = UDim2.new(1, -12, 0, 26),
+                TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Top,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
+            label(tile, tostring(e.kind or "?"), 9, T.muted, FONT, {
+                Position = UDim2.fromOffset(6, 99), Size = UDim2.new(1, -12, 0, 12), TextXAlignment = Enum.TextXAlignment.Center,
+            })
+            tile.MouseButton1Click:Connect(function()
+                settings.forgePick[e.uid] = (not settings.forgePick[e.uid]) or nil
+                save(); renderForge(true)
+            end)
+        end
+    end
+    if not profile then
+        f.empty.Text = "Waiting for your bag… it loads after the next loot or menu update."
+    elseif shown == 0 then
+        f.empty.Text = settings.forgeFilter == 3 and "Nothing ticked yet. Switch to All and tap a picture." or "No gear here."
+    else
+        f.empty.Text = ""
+    end
+end
+
+local forgeBusy = false
+
+-- next ticked piece we can afford, or nil + reason
+local function nextForge()
+    local target = math.min(settings.forgeTarget, maxPlus())
+    local reason = "Nothing ticked"
+    for _, e in ipairs(forgeItems()) do
+        if settings.forgePick[e.uid] then
+            if e.plus >= target then
+                reason = "All ticked gear is at +" .. target
+            else
+                local stone = whetstoneId(e.rarity)
+                local cost = honeGold(e.rarity, e.plus)
+                if stonesOf(stone) < 1 then
+                    reason = "Need a " .. tostring(e.rarity) .. " whetstone"
+                elseif gold() - cost < settings.forgeReserve then
+                    reason = "Not enough gold (" .. cost .. ")"
+                else
+                    return e
+                end
+            end
+        end
+    end
+    return nil, reason
+end
+
+local function hone(e)
+    local req = Remotes:FindFirstChild("ProfileRequest")
+    if not req then ui.forge.status.Text = "Blacksmith not available here" return end
+    forgeBusy = true
+    local before = e.plus
+    local ok, result = pcall(function()
+        return req:InvokeServer("Village", {
+            action = "hone", item = e.uid,
+            hero = profile and profile.heroSlot ~= nil and tostring(profile.heroSlot) or nil,
+        })
+    end)
+    forgeBusy = false
+    if not ok or type(result) ~= "table" then
+        ui.forge.status.Text = "No answer from the server"
+        return
+    end
+    if type(result.profile) == "table" then profile = result.profile end
+    local msg = tostring(result.message or (result.ok == false and "Refused" or "Done"))
+    local success = msg:sub(1, 8) == "SUCCESS!"
+    ui.forge.status.Text = string.format("%s +%d: %s", e.name, before, success and "success" or (msg:sub(1, 7) == "FAILED!" and "failed" or msg))
+    renderForge()
+end
+
+local lastHone = 0
+function forgeTick()
+    if not (settings.autoForge and profile) or forgeBusy then return end
+    if battle or inAdventure() then return end
+    if os.clock() - lastHone < 1.2 then return end
+    local e, why = nextForge()
+    if not e then ui.forge.status.Text = why return end
+    lastHone = os.clock()
+    task.spawn(hone, e)
+end
+
+ui.forge.onceBtn.MouseButton1Click:Connect(function()
+    if forgeBusy then return end
+    if not profile then ui.forge.status.Text = "No bag data yet" return end
+    local e, why = nextForge()
+    if not e then ui.forge.status.Text = why return end
+    task.spawn(hone, e)
+end)
+end -- AUTO FORGE LOGIC
+
 ---------------------------------------------------------------- events
 RPGState.OnClientEvent:Connect(function(name, data)
     if not alive() then return end
@@ -2066,8 +2356,9 @@ RPGState.OnClientEvent:Connect(function(name, data)
             profile = p
             refreshSellPreview()
             renderBagNames()
+            renderForge()
         end
-    elseif name == "LightDialogue" and runOn("autoDeath") then
+    elseif name == "LightDialogue" and R.runOn("autoDeath") then
         local payload = type(data) == "table" and data or {}
         task.delay(math.max(1, settings.runDelay), function()
             RPGCommand:FireServer("LightContinue", { passage = payload.passageRequired == true })
@@ -2080,6 +2371,7 @@ pcall(function() RPGCommand:FireServer("RunAction", { action = "state" }) end)
 ui.fightKind.Text = "—"
 refreshSellPreview()
 renderBagNames()
+renderForge(true)
 
 task.spawn(function()
     local lastClick, lastSync, lastRunSync, lastSell = 0, 0, 0, 0
@@ -2105,15 +2397,16 @@ task.spawn(function()
             setCombatStatus(settings.combat and "Waiting for a battle" or "Off")
         end
         pcall(C.tryAct)
-        pcall(tickRun)
+        pcall(R.tickRun)
         if os.clock() - lastClick > 0.8 then
             lastClick = os.clock()
-            pcall(clickThrough)
+            pcall(R.clickThrough)
         end
         if settings.autoSell and not battle and os.clock() - lastSell > 5 then
             lastSell = os.clock()
             pcall(sellNow, false)
         end
+        pcall(forgeTick)
         if (battle or inBattleNow()) and settings.combat then setLive("In battle", true)
         elseif inAdventure() and settings.autoRun then setLive("Run: " .. tostring(run and run.phase or "syncing"), true)
         elseif inAdventure() then setLive("Auto Run is off", false)
