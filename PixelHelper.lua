@@ -162,6 +162,10 @@ local settings = {
     autoHatch = false, hatchEggs = {},             -- [egg item id] = true
     autoRelease = false, releaseRarity = { Common = true }, releaseKeepLevel = 0,
     autoCandyEgg = false, candyKeep = 0,           -- buy Haunted Eggs while candy stays above this
+    -- dungeon keys (KeyDungeons)
+    autoBlight = false, blightDungeons = {}, blightDiffs = { normal = true, hard = true },
+    slimeOrder = 1, slimeMaxTier = 0, blightKeep = 0, -- 1 highest slime first, 2 lowest; 0 = no limit
+    autoUseKey = false, useKeyKind = 1, useKeyMaxTier = 0, keysPerRun = 3, -- 1 Torment keys only, 2 any key
     -- window
     winW = 820, winH = 520,
 }
@@ -194,6 +198,8 @@ do -- fill in anything added since the last save
     if type(settings.forgePick) ~= "table" then settings.forgePick = {} end
     if type(settings.hatchEggs) ~= "table" then settings.hatchEggs = {} end
     if type(settings.releaseRarity) ~= "table" then settings.releaseRarity = { Common = true } end
+    if type(settings.blightDungeons) ~= "table" then settings.blightDungeons = {} end
+    if type(settings.blightDiffs) ~= "table" then settings.blightDiffs = { normal = true, hard = true } end
 end
 
 local saveQueued = false
@@ -526,6 +532,7 @@ local ICON_KEYS = {
     ["Events"] = "nodeMystery", ["Flow"] = "nodeTreasure", ["When a Run Ends"] = "nodeRest",
     ["Gear Types"] = "pouch", ["Rarity"] = "star", ["Never Sell"] = "heart", ["In Your Bag"] = "pouch",
     ["Pick Gear"] = "sword", ["Window"] = "book", ["Files"] = "blueprint", ["Unload"] = "skull",
+    ["Keys"] = "key", ["Auto Blight"] = "volatile", ["Auto Use Key"] = "key", ["Your Keys"] = "pouch",
     ["Pets"] = "paw", ["Auto Hatch"] = "star", ["Haunted Egg"] = "candy", ["Auto Release"] = "paw", ["Your Pets"] = "heart",
 }
 
@@ -685,10 +692,13 @@ local brandIcon = new("ImageLabel", {
 label(brand, "Pixel Helper", 14, T.text, FONT_BOLD, { Position = UDim2.fromOffset(44, 1), Size = UDim2.new(1, -44, 0, 18) })
 local classBadge = label(brand, "", 11, T.muted, FONT, { Position = UDim2.fromOffset(44, 19), Size = UDim2.new(1, -44, 0, 14) })
 
-local navList = new("Frame", {
-    Parent = sidebar, BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 96), Size = UDim2.new(1, -20, 1, -106),
-    ZIndex = 2, -- above the sliding highlight
-}, { vlist(2) })
+-- scrolls when there are more tabs than the window is tall
+local navList = new("ScrollingFrame", {
+    Parent = sidebar, BackgroundTransparency = 1, BorderSizePixel = 0,
+    Position = UDim2.fromOffset(10, 96), Size = UDim2.new(1, -16, 1, -106),
+    CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y,
+    ScrollBarThickness = 3, ScrollBarImageColor3 = T.faint, ZIndex = 2,
+}, { vlist(2), pad(0, 4, 8, 0) })
 
 ---------------- main area
 local main = new("Frame", { Parent = window, BackgroundTransparency = 1, Position = UDim2.fromOffset(SIDEBAR, 0), Size = UDim2.new(1, -SIDEBAR, 1, 0) })
@@ -895,11 +905,6 @@ end
 
 ---------------------------------------------------------------- tabs
 local tabs = {}
--- highlight that glides behind the selected nav item (sits on the sidebar, outside the list layout)
-local navPill = new("Frame", {
-    Parent = sidebar, BackgroundColor3 = T.raised, BorderSizePixel = 0,
-    Position = UDim2.fromOffset(10, 96), Size = UDim2.new(1, -20, 0, 40),
-}, { corner(R_CTL) })
 
 local function selectTab(index)
     settings.tab = index
@@ -909,13 +914,10 @@ local function selectTab(index)
         t.page.Visible = on
         t.label.TextColor3 = on and T.text or T.muted
         t.icon.TextColor3 = on and T.accentT or T.faint
+        tween(t.button, { BackgroundTransparency = on and 0 or 1 }) -- highlight sits on the button itself
     end
     titleText.Text = tabs[index].name
     subtitleText.Text = tabs[index].subtitle
-    local b = tabs[index].button
-    task.defer(function()
-        tween(navPill, { Position = UDim2.fromOffset(10, b.AbsolutePosition.Y - sidebar.AbsolutePosition.Y) })
-    end)
 end
 
 local function addTab(section, glyph, name, subtitle)
@@ -926,8 +928,8 @@ local function addTab(section, glyph, name, subtitle)
     end
     local b = new("TextButton", {
         Parent = navList, LayoutOrder = #tabs * 10 + 2, AutoButtonColor = false,
-        Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, Text = "", ZIndex = 2,
-    })
+        Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = T.raised, BackgroundTransparency = 1, Text = "", ZIndex = 2,
+    }, { corner(R_CTL) })
     local iconBox = new("Frame", {
         Parent = b, BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0.5, -13), Size = UDim2.fromOffset(26, 26), ZIndex = 2,
     })
@@ -944,6 +946,7 @@ end
 local lobbyL, lobbyR   = addTab("General", "▶", "Lobby", "Pick a stage and launch it automatically")
 local combatL, combatR = addTab("Automation", "◆", "Auto Farm", "Battle: attack, dodge, skills, potions")
 local runL, runR       = addTab(nil, "↗", "Run", "Map paths, events and what happens when a run ends")
+local keyL, keyR       = addTab(nil, "⚿", "Keys", "Blight dungeon keys in the lobby, use them in Story runs")
 local sellL, sellR     = addTab("Items", "$", "Auto Sell", "Sell gear you don't want, keep what you name")
 local forgeL, forgeR   = addTab(nil, "⚒", "Auto Forge", "Tick gear pictures and hone them to a target +")
 local petL, petR       = addTab(nil, "♣", "Pets", "Hatch eggs, release pets, buy Haunted Eggs")
@@ -1568,6 +1571,79 @@ new("UIPadding", { Parent = emptyText, PaddingLeft = UDim.new(0, 16), PaddingRig
 
 ui.forge = { gold = goldText, stones = stoneText, status = statusText, onceBtn = onceBtn, grid = grid, empty = emptyText }
 end -- AUTO FORGE TAB
+
+---------------------------------------------------------------- KEYS TAB
+local renderKeys = function() end -- set by the keys logic
+
+do
+local KD
+pcall(function() KD = require(Shared:WaitForChild("KeyDungeons", 5)) end)
+local dungeons = {} -- { id, name }
+for id, def in pairs(KD and KD.Definitions or {}) do
+    table.insert(dungeons, { id = id, name = tostring(def.KeyName or id) })
+end
+table.sort(dungeons, function(a, b) return a.name < b.name end)
+-- first run: every dungeon ticked
+if next(settings.blightDungeons) == nil then
+    for _, d in ipairs(dungeons) do settings.blightDungeons[d.id] = true end
+end
+
+local blightCard = card(keyL, 1, "✦", T.violet, "Auto Blight", "Key + Blighted Slime = Torment key. Lobby and runs", "autoBlight")
+local blightStatus = valueRow(blightCard, "Status")
+blightStatus.Text = "—"
+local nextRow = row(blightCard, nil, nil, 46)
+label(nextRow, "Next", 13, T.text, FONT_SEMI, { Position = UDim2.fromOffset(0, 6), Size = UDim2.new(0, 60, 0, 18) })
+local nextText = label(nextRow, "—", 11, T.accentT, FONT_SEMI, {
+    Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 0, 16),
+})
+sectionLabel(blightCard, "Use keys from")
+for _, d in ipairs(dungeons) do
+    local r = row(blightCard, d.name, nil)
+    checkbox(r, function() return settings.blightDungeons[d.id] == true end, function()
+        settings.blightDungeons[d.id] = (not settings.blightDungeons[d.id]) or nil; save(); renderKeys()
+    end)
+end
+sectionLabel(blightCard, "Key difficulties it may use")
+for _, diff in ipairs({ "normal", "hard", "nightmare" }) do
+    local r = row(blightCard, diff:sub(1, 1):upper() .. diff:sub(2), nil)
+    checkbox(r, function() return settings.blightDiffs[diff] == true end, function()
+        settings.blightDiffs[diff] = (not settings.blightDiffs[diff]) or nil; save(); renderKeys()
+    end)
+end
+do
+    local r = row(blightCard, "Slime", nil, 44)
+    local bar, refresh
+    bar, refresh = segmented(r, { "Highest first", "Lowest first" }, function() return settings.slimeOrder end, function(i)
+        settings.slimeOrder = i; save(); refresh(); renderKeys()
+    end)
+    rightAnchor(bar, 200, 28)
+end
+sliderRow(blightCard, "Max slime level", "Only use slimes up to this level", "slimeMaxTier", 0, 99, 1, "Lv %d", "Any", function() renderKeys() end)
+sliderRow(blightCard, "Keep keys", "Leave at least this many of each key", "blightKeep", 0, 20, 1, "%d", "None", function() renderKeys() end)
+footerNote(blightCard, "The result only depends on the slime level, so the cheapest keys (L1 Normal) are used first.")
+
+local useCard = card(keyR, 1, "⚿", T.amber, "Auto Use Key", "In a Story run: use a key at the path pick and confirm", "autoUseKey")
+local useStatus = valueRow(useCard, "Status")
+useStatus.Text = "—"
+do
+    local r = row(useCard, "Keys", nil, 44)
+    local bar, refresh
+    bar, refresh = segmented(r, { "Torment only", "Any key" }, function() return settings.useKeyKind end, function(i)
+        settings.useKeyKind = i; save(); refresh()
+    end)
+    rightAnchor(bar, 200, 28)
+end
+sliderRow(useCard, "Up to Torment", "Skip Torment keys above this tier", "useKeyMaxTier", 0, 99, 1, "T%d", "Any")
+sliderRow(useCard, "Keys per run", "How many keys to use in one Story run", "keysPerRun", 1, 10, 1, "%d")
+footerNote(useCard, "Highest Torment key first. Story runs only (the game doesn't allow keys in Torment or Halloween). The party confirms the entry automatically.")
+
+local listCard = card(keyR, 2, "☰", T.sky, "Your Keys", "Keys and Blighted Slime in your bag")
+local keyList = new("Frame", {
+    Parent = listCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+}, { vlist(0) })
+
+ui.keys = { KD = KD, blightStatus = blightStatus, nextText = nextText, useStatus = useStatus, list = keyList }
+end -- KEYS TAB
 
 ---------------------------------------------------------------- PETS TAB
 local renderPets = function() end -- set by the pets logic
@@ -2321,6 +2397,7 @@ local function tickRun()
     if os.clock() - runAt < settings.runDelay then return end
     local phase = state.phase
     if phase == "choose" and runOn("autoPath") then
+        if os.clock() < (R.holdVoteUntil or 0) then return end -- a dungeon key is being offered
         for _, v in ipairs(type(state.votes) == "table" and state.votes or {}) do
             if type(v) == "table" and v.userId == LocalPlayer.UserId then return end
         end
@@ -2772,6 +2849,7 @@ function setProfile(p)
     renderBagNames()
     renderForge()
     renderPets()
+    renderKeys()
 end
 
 local lastAsk = -math.huge
@@ -3015,6 +3093,200 @@ function petTick()
 end
 end -- PETS LOGIC
 
+---------------------------------------------------------------- KEYS LOGIC
+-- Blight: ProfileRequest:InvokeServer("Village", { action = "blight_key", item = <key>, kind = <BlightedSlime_N>,
+--         credit = <guid>, hero = <heroSlot> })  ->  <Prefix>Torment_N key of the same dungeon
+-- Use:    RPGCommand:FireServer("RunAction", { action = "dungeonOffer", itemId = <key> })   (Story run, "choose" phase)
+--         then in "dungeonConfirm": RunAction { action = "dungeonReady", offerId, runId, round, phase }
+local keyTick -- set below
+do
+local KD = ui.keys.KD
+local DIFF_ORDER = { normal = 1, hard = 2, nightmare = 3 }
+
+local function invCount(id)
+    local inv = profile and type(profile.inventory) == "table" and profile.inventory or {}
+    return math.max(0, math.floor(tonumber(inv[id]) or 0))
+end
+
+local function dungeonName(id)
+    local def = KD and KD.Definitions and KD.Definitions[id]
+    return def and tostring(def.KeyName or id) or tostring(id)
+end
+
+local function keyLabel(k)
+    if k.tormentTier then return string.format("%s · Torment %d", dungeonName(k.dungeon), k.tormentTier) end
+    return string.format("%s · L%d %s", dungeonName(k.dungeon), k.act or 0, tostring(k.difficulty))
+end
+
+-- story keys we may sacrifice, cheapest first (lowest act, then easiest difficulty)
+local function blightableKeys()
+    local out = {}
+    for _, k in ipairs(KD and KD.KeyList or {}) do
+        if not k.tormentTier and settings.blightDungeons[k.dungeon] and settings.blightDiffs[k.difficulty]
+            and invCount(k.id) > settings.blightKeep then
+            table.insert(out, k)
+        end
+    end
+    table.sort(out, function(a, b)
+        if (a.act or 0) ~= (b.act or 0) then return (a.act or 0) < (b.act or 0) end
+        return (DIFF_ORDER[a.difficulty] or 9) < (DIFF_ORDER[b.difficulty] or 9)
+    end)
+    return out
+end
+
+local function pickSlime()
+    local best
+    for _, s in ipairs(KD and KD.SlimeList or {}) do
+        if invCount(s.id) > 0 and (settings.slimeMaxTier == 0 or s.tier <= settings.slimeMaxTier) then
+            if not best or (settings.slimeOrder == 1 and s.tier > best.tier) or (settings.slimeOrder == 2 and s.tier < best.tier) then
+                best = s
+            end
+        end
+    end
+    return best
+end
+
+local function nextBlight()
+    local slime = pickSlime()
+    if not slime then return nil, nil, "No Blighted Slime" end
+    local key = blightableKeys()[1]
+    if not key then return nil, nil, "No keys match the ticks" end
+    return key, slime
+end
+
+function renderKeys()
+    local K = ui.keys
+    if not KD then K.nextText.Text = "Key data isn't available" return end
+    local key, slime, why = nextBlight()
+    if key then
+        local result = KD.BlightedKey(key.dungeon, slime.tier)
+        K.nextText.Text = string.format("%s + Slime Lv %d  →  %s", keyLabel(key), slime.tier, result and keyLabel(result) or "?")
+    else
+        K.nextText.Text = profile and why or "Waiting for your bag…"
+    end
+
+    for _, c in ipairs(K.list:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+    K.list:SetAttribute("rows", 0)
+    local shown = 0
+    local function add(title, sub, n, color)
+        shown += 1
+        local r = row(K.list, nil, nil, 40)
+        local pic = new("Frame", { Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, -15), Size = UDim2.fromOffset(30, 30), ZIndex = 2 }, { corner(8) })
+        if not Icons.draw(pic, "key", 24, nil, 3) then
+            label(pic, "K", 14, color, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3 })
+        end
+        label(r, title, 12, color or T.text, FONT_SEMI, { Position = UDim2.fromOffset(40, 4), Size = UDim2.new(1, -90, 0, 16) })
+        label(r, sub, 10, T.muted, FONT, { Position = UDim2.fromOffset(40, 21), Size = UDim2.new(1, -90, 0, 14) })
+        label(r, "x" .. n, 12, T.text, FONT_BOLD, {
+            AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0, 44, 1, 0), TextXAlignment = Enum.TextXAlignment.Right,
+        })
+    end
+    -- slimes, then Torment keys (highest first), then story keys
+    local slimes, torment, story = {}, {}, {}
+    for _, s in ipairs(KD.SlimeList or {}) do if invCount(s.id) > 0 then table.insert(slimes, s) end end
+    for _, k in ipairs(KD.KeyList or {}) do
+        if invCount(k.id) > 0 then table.insert(k.tormentTier and torment or story, k) end
+    end
+    table.sort(torment, function(a, b) return a.tormentTier > b.tormentTier end)
+    for _, s in ipairs(slimes) do add("Blighted Slime Lv " .. s.tier, "Blight material", invCount(s.id), T.violet) end
+    for _, k in ipairs(torment) do add(keyLabel(k), "Torment key", invCount(k.id), T.amber) end
+    for _, k in ipairs(story) do add(keyLabel(k), "Story key", invCount(k.id), T.text) end
+    if shown == 0 then
+        local r = row(K.list, nil, nil, 34)
+        label(r, profile and "No keys or slimes right now." or "Waiting for your bag…", 12, T.faint, FONT, { Size = UDim2.fromScale(1, 1) })
+    end
+end
+
+local lastBlight = 0
+local function tryBlight()
+    if not settings.autoBlight or villageBusy or not profile or not KD then return end
+    if battle or os.clock() - lastBlight < 2 then return end
+    local key, slime, why = nextBlight()
+    if not key then ui.keys.blightStatus.Text = why return end
+    local req = Remotes:FindFirstChild("ProfileRequest")
+    if not req then ui.keys.blightStatus.Text = "Not available here" return end
+    lastBlight, villageBusy = os.clock(), true
+    task.spawn(function()
+        local ok, res = pcall(function()
+            return req:InvokeServer("Village", {
+                action = "blight_key", item = key.id, kind = slime.id,
+                credit = HttpService:GenerateGUID(false),
+                hero = tostring(profile and profile.heroSlot or ""),
+            })
+        end)
+        villageBusy = false
+        if ok and type(res) == "table" and res.ok then
+            ui.keys.blightStatus.Text = "Blighted " .. keyLabel(key) .. " with Slime Lv " .. slime.tier
+            if type(res.profile) == "table" then setProfile(res.profile) else requestProfile(true) end
+        else
+            ui.keys.blightStatus.Text = ok and type(res) == "table" and tostring(res.message or res.error or "Refused") or "No answer from the server"
+            lastBlight = os.clock() + 4 -- back off a little after a refusal
+        end
+    end)
+end
+
+-- Story run only: no land (Halloween), not Torment, not an expedition
+local function isStoryRun(state)
+    if state.land or state.tormentTier or type(state.gauntlet) == "table" or state.expedition then return false end
+    local d = tostring(state.difficulty or "")
+    return d:sub(1, 7) ~= "torment" and d:sub(1, 7) ~= "harvest"
+end
+
+-- best key to use now: Torment keys highest tier first (within the limit), then story keys if allowed
+local function pickUseKey()
+    local best
+    for _, k in ipairs(KD and KD.KeyList or {}) do
+        if invCount(k.id) > 0 then
+            local ok
+            if k.tormentTier then
+                ok = settings.useKeyMaxTier == 0 or k.tormentTier <= settings.useKeyMaxTier
+            else
+                ok = settings.useKeyKind == 2
+            end
+            if ok then
+                local score = k.tormentTier and (1000 + k.tormentTier) or ((k.act or 0) * 3 + (DIFF_ORDER[k.difficulty] or 0))
+                if not best or score > best.score then best = { key = k, score = score } end
+            end
+        end
+    end
+    return best and best.key
+end
+
+local usedPerRun = {}
+local function tryUseKey()
+    if not settings.autoUseKey or not KD then return end
+    local state = run
+    if not (state and inAdventure()) then return end
+    if state.phase == "dungeonConfirm" and type(state.dungeonOffer) == "table" then
+        local offer = state.dungeonOffer
+        if offer.id ~= nil and once("dungeonReady:" .. tostring(offer.id), 6) then
+            local payload = { action = "dungeonReady", offerId = offer.id }
+            payload.runId, payload.round, payload.phase = state.id, state.round, state.phase
+            RPGCommand:FireServer("RunAction", payload)
+            ui.keys.useStatus.Text = "Confirmed the dungeon entry"
+        end
+        return
+    end
+    if state.phase ~= "choose" or state.dungeon or state.dungeonOffer or not isStoryRun(state) then return end
+    local used = usedPerRun[state.id] or 0
+    if used >= settings.keysPerRun then ui.keys.useStatus.Text = "Used " .. used .. " key(s) this run" return end
+    local key = pickUseKey()
+    if not key then ui.keys.useStatus.Text = profile and "No usable key" or "Waiting for your bag…" return end
+    if once("offer:" .. tostring(state.id) .. ":" .. tostring(state.round), 8) then
+        R.holdVoteUntil = os.clock() + 4 -- don't vote a path while the offer goes through
+        RPGCommand:FireServer("RunAction", { action = "dungeonOffer", itemId = key.id })
+        usedPerRun[state.id] = used + 1
+        ui.keys.useStatus.Text = "Using " .. keyLabel(key)
+        task.delay(3, function() requestProfile(true) end)
+    end
+end
+
+function keyTick()
+    tryUseKey()
+    tryBlight()
+end
+end -- KEYS LOGIC
+
 ---------------------------------------------------------------- events
 RPGState.OnClientEvent:Connect(function(name, data)
     if not alive() then return end
@@ -3065,6 +3337,7 @@ refreshSellPreview()
 renderBagNames()
 renderForge(true)
 renderPets()
+renderKeys()
 
 task.spawn(function()
     local lastClick, lastSync, lastRunSync, lastSell = 0, 0, 0, 0
@@ -3086,6 +3359,7 @@ task.spawn(function()
             setCombatStatus(settings.combat and "Waiting for a battle" or "Off")
         end
         pcall(C.tryAct)
+        pcall(keyTick) -- before the path vote, so a key offer goes first
         pcall(R.tickRun)
         if os.clock() - lastClick > 0.8 then
             lastClick = os.clock()
