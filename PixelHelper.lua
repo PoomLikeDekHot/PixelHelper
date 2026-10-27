@@ -53,6 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/rQdvdtsUEc" -- bug reports and help
+local VERSION     = "1.4.1" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -1433,7 +1434,7 @@ switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head bac
 
 local endCard = card(runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
-switchRow(endCard, "Auto Next Act", "Keep going after each act boss", "storyNextAct")
+switchRow(endCard, "Auto Next Act", "Off: stop after the first act (unless Leave after Act is set)", "storyNextAct")
 sliderRow(endCard, "Leave after Act", "Picks Return to the Castle after this act's boss", "storyExitAct", 0, 10, 1, "Act %d", "End")
 sectionLabel(endCard, "Torment  ·  all 3 lands are played")
 switchRow(endCard, "Auto Next Tier", "Start the next tier after land 3", "tormentNextTier")
@@ -2002,6 +2003,7 @@ do
 end
 
 local fileCard = card(setR, 1, "⌂", T.sky, "Files", "In your executor's workspace folder")
+valueRow(fileCard, "Version").Text = VERSION
 valueRow(fileCard, "Script").Text = ONLINE and "Online (latest)" or SCRIPT_FILE
 valueRow(fileCard, "Bubble picture").Text = ICON_FILE
 valueRow(fileCard, "Settings").Text = SAVE_FILE
@@ -2565,9 +2567,11 @@ local function modeOf(state)
     return "story"
 end
 
+-- the act to stop after: the "Leave after Act" slider when set, else the first act when Auto Next Act is off
 local function storyExitAct(state)
+    if settings.storyExitAct > 0 then return settings.storyExitAct end
     if not settings.storyNextAct then return tonumber(state.startAct) or 1 end
-    return settings.storyExitAct -- 0 = never
+    return 0 -- never
 end
 
 -- already past the act we wanted to stop at (only a Turn Back card can get us out now)
@@ -2753,6 +2757,12 @@ local function clickThrough()
             if text:find("RETURN TO CASTLE", 1, true) then endButtons.castle = d
             elseif text:find("PLAY AGAIN", 1, true) then endButtons.replay = d
             elseif text:sub(1, 6) == "NEXT: " then endButtons.next = d end
+            -- act-end choice screen: also press the game's own button, in case the remote alone didn't take
+            if text == "RETURN TO THE CASTLE" and run and run.phase == "story" and leaveAfterThisAct(run)
+                and shownOnScreen(d) and once("storybtn:" .. tostring(run.id) .. ":" .. tostring(run.act), 4) then
+                press(d)
+                setRunStatus("Act " .. tostring(run.act) .. " cleared: pressed Return to the Castle")
+            end
             local isChest = d:FindFirstAncestor("ChestShade") ~= nil
             local isContinue = text:sub(1, 8) == "CONTINUE" and not text:find("CREATION", 1, true)
             if isContinue and ((isChest and settings.autoChest) or (not isChest and settings.autoContinue)) then
