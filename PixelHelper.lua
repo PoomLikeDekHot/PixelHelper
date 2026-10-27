@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/rQdvdtsUEc" -- bug reports and help
-local VERSION     = "1.5.0" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.6.0" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -138,7 +138,7 @@ local settings = {
     combat = false, autoAttack = true, perfectAttack = true, hideMinigame = true,
     perfectDodge = true, autoGuard = true,
     autoPotion = true, potionHp = 35,
-    autoSkill = false, attackIfNoMana = true,
+    autoSkill = false, attackIfNoMana = true, scrollFirst = false,
     bossList = true, miniAsBoss = true, skillView = 1, -- 1 normal mobs, 2 boss
     skillMode = 2, -- 1 top first, 2 rotate (next ready), 3 wait in order
     target = 1, delay = 0.8,
@@ -1346,6 +1346,7 @@ do
     bar.Position = UDim2.fromOffset(0, 46)
     note.Text = modeNotes[settings.skillMode] or ""
 end
+switchRow(skillCard, "Use Scroll First", "Cast your gear Scroll at the start of each battle", "scrollFirst")
 switchRow(skillCard, "Attack When Out of Energy", "Off = Meditate to refill instead", "attackIfNoMana")
 switchRow(skillCard, "Separate Boss List", "Use a different order against bosses", "bossList", function() onSkillsChanged() end)
 switchRow(skillCard, "Mini-Boss Uses Boss List", "Treat mini-bosses and elites as bosses", "miniAsBoss")
@@ -2390,7 +2391,13 @@ local function chooseMove(state)
 
     local attack = findAction(state, function(a) return categoryOf(a) == "Attack" and usable(a) end)
 
-    -- 3) skills by priority (boss list or normal list)
+    -- 3) gear scroll once per battle, before anything else
+    if combatOn("scrollFirst") and not companion then
+        local scroll = findAction(state, function(a) return categoryOf(a) == "Scroll" and usable(a) end)
+        if scroll then return scroll, "Scroll" end
+    end
+
+    -- 4) skills by priority (boss list or normal list)
     if combatOn("autoSkill") and not companion then
         local byId = {}
         for _, a in ipairs(type(state.actions) == "table" and state.actions or {}) do
@@ -2411,7 +2418,7 @@ local function chooseMove(state)
         end
     end
 
-    -- 4) basic attack
+    -- 5) basic attack
     if combatOn("autoAttack") and attack then return attack, "Attack" end
     return nil
 end
