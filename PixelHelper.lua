@@ -154,7 +154,7 @@ local settings = {
     autoSell = false,
     sellKinds = { Weapon = false, Helmet = false, Chest = false, Legs = false, Relic = false, Scroll = false },
     sellRarity = { Common = true, Uncommon = true, Rare = false, Epic = false, Legendary = false, Secret = false },
-    keepNames = {}, -- [lowercase name] = true
+    keepNames = {}, -- [lowercase name] = true (every copy) or a rarity id (that rarity and up)
     -- auto forge (Blacksmith "hone")
     autoForge = false, forgeTarget = 5, forgeReserve = 0, forgeFilter = 1,
     forgePick = {}, -- [gear uid] = true
@@ -1270,7 +1270,7 @@ local addBtn = primaryButton(addRow, "Keep", 76)
 local keepListFrame = new("Frame", {
     Parent = keepCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 }, { vlist(0) })
-local keepFoot = footerNote(keepCard, "Matches part of the name and ignores case, so \"sunforged\" keeps every Sunforged piece.")
+local keepFoot = footerNote(keepCard, "Matches part of the name and ignores case. Tap the rarity button to keep only that rarity and up: lower copies of that name get sold.")
 keepFoot.LayoutOrder = 60
 
 local function renderKeep()
@@ -1287,12 +1287,32 @@ local function renderKeep()
         return
     end
     for _, n in ipairs(names) do
-        local r = row(keepListFrame, n, nil, 34)
+        local r = row(keepListFrame, nil, nil, 34)
+        label(r, n, 13, T.text, FONT_SEMI, { Size = UDim2.new(1, -116, 1, 0) })
         local x = smallButton(r, "×", 0)
         x.TextSize = 13
         x.MouseButton1Click:Connect(function()
             settings.keepNames[n] = nil; save(); renderKeep(); renderBagNames(); refreshSellPreview()
         end)
+        -- lowest rarity kept: Any -> Uncommon+ -> ... -> Secret+ -> Any; lower copies get sold
+        local minBtn = smallButton(r, "", -28)
+        minBtn.Size, minBtn.TextSize = UDim2.fromOffset(80, 22), 10
+        local function paint()
+            local v = settings.keepNames[n]
+            minBtn.Text, minBtn.TextColor3 = "Any rarity", T.muted
+            for _, rr in ipairs(RARITIES) do
+                if rr.id == v then minBtn.Text, minBtn.TextColor3 = rr.id .. "+", rr.color end
+            end
+        end
+        minBtn.MouseButton1Click:Connect(function()
+            local v, nextV = settings.keepNames[n], RARITIES[2].id
+            for i, rr in ipairs(RARITIES) do
+                if rr.id == v then nextV = RARITIES[i + 1] and RARITIES[i + 1].id or true end
+            end
+            settings.keepNames[n] = nextV
+            paint(); save(); renderBagNames(); refreshSellPreview()
+        end)
+        paint()
     end
 end
 
@@ -1373,7 +1393,7 @@ do
                 matches += 1
                 if shown < limit then
                     shown += 1
-                    local kept = settings.keepNames[it.key] == true
+                    local kept = settings.keepNames[it.key] ~= nil
                     local r = new("Frame", {
                         Parent = listFrame, LayoutOrder = shown, BorderSizePixel = 0,
                         BackgroundColor3 = kept and T.raised2 or T.raised, Size = UDim2.new(1, 0, 0, 48),
@@ -1399,7 +1419,7 @@ do
                     label(r, sub, 10, owned[it.key] and T.green or T.muted, FONT, {
                         Position = UDim2.fromOffset(46, 25), Size = UDim2.new(1, -86, 0, 14),
                     })
-                    checkbox(r, function() return settings.keepNames[it.key] == true end, function()
+                    checkbox(r, function() return settings.keepNames[it.key] ~= nil end, function()
                         settings.keepNames[it.key] = (not settings.keepNames[it.key]) or nil
                         r.BackgroundColor3 = settings.keepNames[it.key] and T.raised2 or T.raised
                         save(); refreshCount(); renderKeep(); renderBagNames(); refreshSellPreview()
@@ -2498,12 +2518,26 @@ local function wornSet()
     return worn
 end
 
-local function keptByName(name)
+-- keep list verdict for one piece: "keep", "sell" or nil (no name matches, use the ticks).
+-- keepNames[name] = true keeps every copy; = "Legendary" keeps Legendary and up and sells lower copies
+local function keepRule(name, rarity)
     local n = string.lower(tostring(name or ""))
-    for k in pairs(settings.keepNames) do
-        if n:find(k, 1, true) then return true end
+    local have, verdict = 0, nil
+    for i, r in ipairs(RARITIES) do
+        if r.id == rarity then have = i end
     end
-    return false
+    for k, v in pairs(settings.keepNames) do
+        if n:find(k, 1, true) then
+            if v == true then return "keep" end
+            local need = 1
+            for i, r in ipairs(RARITIES) do
+                if r.id == v then need = i end
+            end
+            if have >= need then return "keep" end
+            verdict = "sell"
+        end
+    end
+    return verdict
 end
 
 -- every bag item: { uid, name, kind, rarity, price, sell = bool }
@@ -2522,10 +2556,11 @@ local function scanBag()
                 uid = d.uid or uid, name = d.displayName or d.name or "?", baseName = d.name or "?",
                 kind = d.gearKind, rarity = d.rarity, price = price,
             }
+            local rule = keepRule(entry.name, entry.rarity)
             entry.sell = canSell and not worn[uid] and not worn[entry.uid] and d.locked ~= true and d.starter ~= true
-                and settings.sellKinds[entry.kind or ""] == true
-                and settings.sellRarity[entry.rarity or ""] == true
-                and not keptByName(entry.name)
+                and (rule == "sell" or (rule == nil
+                    and settings.sellKinds[entry.kind or ""] == true
+                    and settings.sellRarity[entry.rarity or ""] == true))
             table.insert(out, entry)
         end
     end
@@ -2577,7 +2612,7 @@ function renderBagNames()
         label(r, string.format("%s · %s · x%d", tostring(info.kind or "?"), tostring(info.rarity or "?"), info.count), 10, T.muted, FONT, {
             Position = UDim2.fromOffset(0, 21), Size = UDim2.new(1, -40, 0, 14),
         })
-        checkbox(r, function() return settings.keepNames[key] == true end, function()
+        checkbox(r, function() return settings.keepNames[key] ~= nil end, function()
             settings.keepNames[key] = (not settings.keepNames[key]) or nil
             save(); ui.renderKeep(); refreshSellPreview()
         end)
