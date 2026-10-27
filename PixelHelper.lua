@@ -52,6 +52,7 @@ local OLD_SAVE    = "PixelHelper_Settings.json" -- shared file from older versio
 local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper.lua"
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
+local DISCORD_URL = "https://discord.gg/rQdvdtsUEc" -- bug reports and help
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -317,6 +318,15 @@ local FONT_SEMI = Font.new("rbxasset://fonts/families/Nunito.json", Enum.FontWei
 local FONT_BOLD = Font.new("rbxasset://fonts/families/FredokaOne.json")
 local EASE      = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local WHITE     = Color3.new(1, 1, 1)
+-- motion tokens: decelerate when arriving, accelerate when leaving, leaving is quicker than arriving
+local MOTION = {
+    hover = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+    enter = TweenInfo.new(0.32, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+    leave = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+    pop   = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+    count = TweenInfo.new(0.8, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+    pulse = TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, -1),
+}
 
 ---------------------------------------------------------------- ui primitives
 local function new(class, props, children)
@@ -353,8 +363,8 @@ local function rightAnchor(inst, width, height)
 end
 
 local function hoverFill(btn, base, over)
-    btn.MouseEnter:Connect(function() tween(btn, { BackgroundColor3 = over }) end)
-    btn.MouseLeave:Connect(function() tween(btn, { BackgroundColor3 = base() }) end)
+    btn.MouseEnter:Connect(function() tween(btn, { BackgroundColor3 = over }, MOTION.hover) end)
+    btn.MouseLeave:Connect(function() tween(btn, { BackgroundColor3 = base() }, MOTION.hover) end)
 end
 
 -- switch (LAIKA: 42x24, off #303238, on green). returns button, refresh()
@@ -524,6 +534,8 @@ local Icons = { mod = nil, slots = {}, onReady = {} }
 
 -- tab / card name -> art key in PixelIcons.Art
 local ICON_KEYS = {
+    ["Home"] = "lineage", ["Activity"] = "hourglass", ["Community"] = "book",
+    ["Gold"] = "coin", ["Potions"] = "potion", ["Candy"] = "candy", ["Gear"] = "pouch",
     ["Lobby"] = "duel", ["Auto Farm"] = "sword", ["Run"] = "nodeBoss", ["Auto Sell"] = "coin",
     ["Auto Forge"] = "cauldron", ["Settings"] = "book",
     ["Stage"] = "nodeFight", ["Auto Start"] = "hourglass", ["Auto Select Character"] = "lineage",
@@ -911,13 +923,22 @@ local function selectTab(index)
     save()
     for i, t in ipairs(tabs) do
         local on = (i == index)
-        t.page.Visible = on
+        local arriving = on and not t.page.Visible
+        t.page.Visible = on -- the final state is set right away; the motion below is only decoration
+        if arriving then
+            t.page.Position = UDim2.fromOffset(0, 58 + 16)
+            tween(t.page, { Position = UDim2.fromOffset(0, 58) }, MOTION.enter)
+        end
         t.label.TextColor3 = on and T.text or T.muted
         t.icon.TextColor3 = on and T.accentT or T.faint
-        tween(t.button, { BackgroundTransparency = on and 0 or 1 }) -- highlight sits on the button itself
+        tween(t.button, { BackgroundTransparency = on and 0 or 1 }, MOTION.hover) -- highlight sits on the button itself
+        tween(t.bar, { Size = UDim2.fromOffset(3, on and 18 or 0) }, MOTION.enter)
     end
     titleText.Text = tabs[index].name
     subtitleText.Text = tabs[index].subtitle
+    titleText.TextTransparency, subtitleText.TextTransparency = 0.7, 0.7
+    tween(titleText, { TextTransparency = 0 }, MOTION.enter)
+    tween(subtitleText, { TextTransparency = 0 }, MOTION.enter)
 end
 
 local function addTab(section, glyph, name, subtitle)
@@ -930,20 +951,25 @@ local function addTab(section, glyph, name, subtitle)
         Parent = navList, LayoutOrder = #tabs * 10 + 2, AutoButtonColor = false,
         Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = T.raised, BackgroundTransparency = 1, Text = "", ZIndex = 2,
     }, { corner(R_CTL) })
+    local bar = new("Frame", { -- accent bar that grows on the selected tab
+        Parent = b, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(3, 0),
+        BackgroundColor3 = T.accent, BorderSizePixel = 0, ZIndex = 3,
+    }, { corner(2) })
     local iconBox = new("Frame", {
         Parent = b, BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0.5, -13), Size = UDim2.fromOffset(26, 26), ZIndex = 2,
     })
     local icon = Icons.slot(iconBox, name, 24, glyph, T.faint, 3)
     local l = label(b, name, 14, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(44, 0), Size = UDim2.new(1, -48, 1, 0), ZIndex = 2 })
     local page, left, right = makePage()
-    table.insert(tabs, { button = b, label = l, icon = icon, page = page, name = name, subtitle = subtitle })
+    table.insert(tabs, { button = b, bar = bar, label = l, icon = icon, page = page, name = name, subtitle = subtitle })
     local index = #tabs
     b.MouseEnter:Connect(function() if settings.tab ~= index then l.TextColor3 = Color3.fromHex("c9cad0") end end)
     b.MouseLeave:Connect(function() if settings.tab ~= index then l.TextColor3 = T.muted end end)
     b.MouseButton1Click:Connect(function() selectTab(index) end)
     return left, right
 end
-local lobbyL, lobbyR   = addTab("General", "▶", "Lobby", "Pick a stage and launch it automatically")
+local homeL, homeR     = addTab("General", "⌂", "Home", "Your character and what the script is doing")
+local lobbyL, lobbyR   = addTab(nil, "▶", "Lobby", "Pick a stage and launch it automatically")
 local combatL, combatR = addTab("Automation", "◆", "Auto Farm", "Battle: attack, dodge, skills, potions")
 local runL, runR       = addTab(nil, "↗", "Run", "Map paths, events and what happens when a run ends")
 local keyL, keyR       = addTab(nil, "⚿", "Keys", "Blight dungeon keys in the lobby, use them in Story runs")
@@ -972,6 +998,207 @@ end
 -- widgets the automation below needs. Each tab is built inside its own do-block
 -- (Luau allows at most 200 locals in one scope).
 local ui = {}
+
+do -- HOME TAB: who you are, what you have, what the script is doing, where to get help
+local function commas(n)
+    local s, k = tostring(math.floor(n + 0.5)), 0
+    repeat s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2") until k == 0
+    return s
+end
+
+-- tweens a number label from its last value to `target`
+local function countTo(lbl, target, prefix)
+    local nv = lbl:FindFirstChild("Count")
+    if not nv then
+        nv = new("NumberValue", { Name = "Count", Parent = lbl, Value = 0 })
+        nv.Changed:Connect(function(v) lbl.Text = (prefix and v > 0.5 and prefix or "") .. commas(v) end)
+        lbl.Text = "0"
+    end
+    if nv:GetAttribute("target") == target then return end
+    nv:SetAttribute("target", target)
+    tween(nv, { Value = target }, MOTION.count)
+end
+
+local function chip(parent, order, text, color)
+    return label(parent, text, 10, color, FONT_BOLD, {
+        LayoutOrder = order, BackgroundTransparency = 0.82, BackgroundColor3 = color,
+        Size = UDim2.fromOffset(0, 20), AutomaticSize = Enum.AutomaticSize.X, TextTruncate = Enum.TextTruncate.None,
+    })
+end
+
+local function statTile(parent, order, name, glyph, tint)
+    local t = new("Frame", { Parent = parent, LayoutOrder = order, BackgroundColor3 = T.raised, BorderSizePixel = 0 }, { corner(R_CTL), line() })
+    local icon = new("Frame", {
+        Parent = t, Position = UDim2.new(0, 10, 0.5, -15), Size = UDim2.fromOffset(30, 30),
+        BackgroundColor3 = tint, BackgroundTransparency = 0.8, BorderSizePixel = 0,
+    }, { corner(9) })
+    Icons.slot(icon, name, 22, glyph, tint, 3)
+    label(t, string.upper(name), 9, T.faint, FONT_BOLD, { Position = UDim2.fromOffset(50, 9), Size = UDim2.new(1, -56, 0, 12) })
+    return label(t, "—", 16, T.text, FONT_BOLD, { Position = UDim2.fromOffset(50, 22), Size = UDim2.new(1, -56, 0, 20) })
+end
+
+---------------- profile
+local profileCard = new("Frame", {
+    Parent = homeL, LayoutOrder = 1, BackgroundColor3 = T.card, BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+}, { corner(R_CARD), line(), vlist(0) })
+profileCard:SetAttribute("rows", 0)
+local hero = new("Frame", {
+    Parent = profileCard, LayoutOrder = 0, BackgroundColor3 = T.accent, BackgroundTransparency = 0.88,
+    BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 96),
+}, {
+    corner(R_CARD), pad(0, 16, 0, 16),
+    new("UIGradient", { Rotation = 0, Transparency = NumberSequence.new(0, 1) }), -- accent wash fading to the right
+})
+local avatar = new("ImageLabel", {
+    Parent = hero, BackgroundColor3 = T.raised, BorderSizePixel = 0, Image = "",
+    Position = UDim2.new(0, 0, 0.5, -30), Size = UDim2.fromOffset(60, 60),
+}, { corner(30), new("UIStroke", { Color = T.accent, Thickness = 2, Transparency = 0.3 }) })
+label(hero, LocalPlayer.DisplayName, 18, T.text, FONT_BOLD, { Position = UDim2.fromOffset(74, 16), Size = UDim2.new(1, -74, 0, 22) })
+label(hero, "@" .. LocalPlayer.Name, 11, T.muted, FONT, { Position = UDim2.fromOffset(74, 38), Size = UDim2.new(1, -74, 0, 14) })
+local chips = new("Frame", {
+    Parent = hero, BackgroundTransparency = 1, Position = UDim2.fromOffset(74, 60), Size = UDim2.new(1, -74, 0, 20),
+}, { new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }) })
+local classChip = chip(chips, 1, "", T.accentT)
+local slotChip = chip(chips, 2, "", T.sky)
+for _, c in ipairs({ classChip, slotChip }) do
+    corner(10).Parent = c
+    pad(0, 8, 0, 8).Parent = c
+end
+task.spawn(function()
+    local ok, img = pcall(function()
+        return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
+    end)
+    if ok then avatar.Image = img end
+end)
+
+local gridRow = row(profileCard, nil, nil, 132)
+local grid = new("Frame", { Parent = gridRow, BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 0, 110) }, {
+    new("UIGridLayout", { CellSize = UDim2.new(0.5, -5, 0, 50), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+})
+local goldText    = statTile(grid, 1, "Gold", "$", T.amber)
+local potionText  = statTile(grid, 2, "Potions", "+", T.pink)
+local candyText   = statTile(grid, 3, "Candy", "♦", Color3.fromHex("fb923c"))
+local gearText    = statTile(grid, 4, "Gear", "▣", T.sky)
+local earnedText  = valueRow(profileCard, "Gold this session", T.green)
+local uptimeText  = valueRow(profileCard, "Running for")
+
+---------------- activity
+local activityCard = card(homeR, 1, "◎", T.green, "Activity", "What the script is doing right now")
+local nowRow = row(activityCard, nil, nil, 56)
+local dot = new("Frame", {
+    Parent = nowRow, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 6, 0.5, 0), Size = UDim2.fromOffset(10, 10),
+    BackgroundColor3 = T.faint, BorderSizePixel = 0, ZIndex = 3,
+}, { corner(5) })
+local ring = new("Frame", { -- expanding ring behind the dot while something is running
+    Parent = nowRow, AnchorPoint = Vector2.new(0.5, 0.5), Position = dot.Position, Size = UDim2.fromOffset(10, 10),
+    BackgroundColor3 = T.green, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 2,
+}, { corner(12) })
+local nowText = label(nowRow, liveText.Text, 15, T.text, FONT_BOLD, { Position = UDim2.fromOffset(22, 0), Size = UDim2.new(1, -22, 1, 0) })
+local pulse = TweenService:Create(ring, MOTION.pulse, { Size = UDim2.fromOffset(24, 24), BackgroundTransparency = 1 })
+
+local function syncNow()
+    if nowText.Text ~= liveText.Text then
+        nowText.Text = liveText.Text
+        nowText.TextTransparency = 0.6
+        tween(nowText, { TextTransparency = 0 }, MOTION.enter)
+    end
+    local on = liveDot.BackgroundColor3 == T.green
+    tween(dot, { BackgroundColor3 = liveDot.BackgroundColor3 }, MOTION.hover)
+    if on and pulse.PlaybackState ~= Enum.PlaybackState.Playing then
+        ring.Size, ring.BackgroundTransparency = UDim2.fromOffset(10, 10), 0.5
+        pulse:Play()
+    elseif not on then
+        pulse:Cancel()
+        ring.BackgroundTransparency = 1
+    end
+end
+liveText:GetPropertyChangedSignal("Text"):Connect(syncNow)
+liveDot:GetPropertyChangedSignal("BackgroundColor3"):Connect(syncNow)
+syncNow()
+
+local mirrors = {
+    Lobby  = valueRow(activityCard, "Lobby"),
+    Battle = valueRow(activityCard, "Battle"),
+    Run    = valueRow(activityCard, "Run"),
+}
+
+---------------- community
+local DISCORD = Color3.fromHex("5865f2")
+local communityCard = card(homeR, 2, "✉", T.violet, "Community", "Report a bug or ask how something works")
+local inviteRow = row(communityCard, nil, nil, 60)
+local discordBtn = new("TextButton", {
+    Parent = inviteRow, AutoButtonColor = false, BackgroundColor3 = DISCORD, BorderSizePixel = 0,
+    AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 40),
+    Text = "Discord  ·  Copy invite link", FontFace = FONT_BOLD, TextSize = 14, TextColor3 = WHITE,
+}, { corner(R_CTL) })
+local btnScale = new("UIScale", { Parent = discordBtn })
+hoverFill(discordBtn, function() return DISCORD end, Color3.fromHex("7983f5"))
+local linkRow = row(communityCard, nil, nil, 44)
+local linkBox = new("TextBox", { -- selectable fallback when the executor has no clipboard
+    Parent = linkRow, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false, TextEditable = false,
+    AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 30),
+    Text = DISCORD_URL, FontFace = FONT, TextSize = 12, TextColor3 = T.accentT, TextXAlignment = Enum.TextXAlignment.Left,
+}, { corner(R_CTL), line(LINE2), pad(0, 10, 0, 10) })
+local copyNote = footerNote(communityCard, "Paste the link in your browser or Discord app to join.")
+
+local resetToken = 0
+discordBtn.MouseButton1Click:Connect(function()
+    btnScale.Scale = 0.96
+    tween(btnScale, { Scale = 1 }, MOTION.pop)
+    local copy = setclipboard or toclipboard or (Clipboard and Clipboard.set)
+    local copied = copy ~= nil and pcall(copy, DISCORD_URL)
+    local note = copyNote:FindFirstChildOfClass("TextLabel")
+    if copied then
+        discordBtn.Text = "✓  Link copied"
+        tween(discordBtn, { BackgroundColor3 = T.green }, MOTION.hover)
+        note.Text = "Copied! Paste it in your browser or Discord app to join."
+    else
+        linkBox:CaptureFocus()
+        linkBox.SelectionStart, linkBox.CursorPosition = 1, #DISCORD_URL + 1
+        note.Text = "Your executor can't copy. The link is selected above: press Ctrl+C."
+    end
+    resetToken += 1
+    local mine = resetToken
+    task.delay(2.5, function()
+        if mine ~= resetToken then return end -- clicked again meanwhile
+        discordBtn.Text = "Discord  ·  Copy invite link"
+        tween(discordBtn, { BackgroundColor3 = DISCORD }, MOTION.enter)
+        note.Text = "Paste the link in your browser or Discord app to join."
+    end)
+end)
+
+---------------- updates from the automation
+local home = {}
+
+-- keeps a Home row showing the same text as a status label on another tab
+function home.mirror(name, source)
+    local target = mirrors[name]
+    local function sync() target.Text = source.Text end
+    source:GetPropertyChangedSignal("Text"):Connect(sync)
+    sync()
+end
+
+-- data = { class, slot, gold, potions, candy, gear, earned, uptime }; nil fields show "—"
+function home.update(data)
+    classChip.Text = string.upper(data.class or "?")
+    slotChip.Text = data.slot and ("SLOT " .. data.slot) or ""
+    slotChip.Visible = data.slot ~= nil
+    for _, stat in ipairs({ { goldText, data.gold }, { potionText, data.potions }, { candyText, data.candy }, { gearText, data.gear } }) do
+        if stat[2] then countTo(stat[1], stat[2]) end -- stays "—" until the profile arrives
+    end
+    if data.earned then
+        earnedText.TextColor3 = data.earned < 0 and T.red or T.green
+        countTo(earnedText, data.earned, "+")
+    else
+        earnedText.Text = "—"
+    end
+    local m = math.floor((data.uptime or 0) / 60)
+    uptimeText.Text = m >= 60 and string.format("%dh %02dm", m // 60, m % 60) or string.format("%d min", m)
+end
+
+ui.home = home
+end -- HOME TAB
 
 do -- LOBBY TAB widgets
 local refreshLobby -- forward
@@ -1748,7 +1975,10 @@ unloadBtn.TextColor3 = WHITE
 ui.unloadBtn = unloadBtn
 end -- SETTINGS TAB
 
-selectTab(math.clamp(settings.tab or 1, 1, #tabs))
+ui.home.mirror("Lobby", ui.lobbyStatus)
+ui.home.mirror("Battle", ui.combatStatus)
+ui.home.mirror("Run", ui.runStatus)
+selectTab(1) -- always open on Home
 
 ---------------------------------------------------------------- shared helpers
 local function serverNow()
@@ -3398,8 +3628,46 @@ renderForge(true)
 renderPets()
 renderKeys()
 
+---------------------------------------------------------------- home stats
+-- A session carries over teleports between the lobby and runs: it continues while the
+-- last tick was under 10 minutes ago, so "Gold this session" counts the whole farm.
+local homeTick
+do
+    local s = type(settings.session) == "table" and settings.session or {}
+    if os.time() - (tonumber(s.last) or 0) > 600 then s = { start = os.time() } end
+    s.last = os.time()
+    settings.session = s
+    local lastSave = 0
+
+    function homeTick()
+        local p = profile
+        local gold = p and tonumber(p.gold)
+        if gold and s.gold == nil then s.gold = gold end
+        if os.time() - lastSave >= 30 then
+            lastSave, s.last = os.time(), os.time()
+            save()
+        end
+        local inv = p and type(p.inventory) == "table" and p.inventory or {}
+        local gear
+        if p and type(p.gearBag) == "table" then
+            gear = 0
+            for _ in pairs(p.gearBag) do gear += 1 end
+        end
+        ui.home.update({
+            class   = myClass(),
+            slot    = p and tonumber(p.heroSlot),
+            gold    = gold,
+            potions = p and tonumber(p.potions),
+            candy   = p and tonumber(inv[HalloweenConfig and HalloweenConfig.CandyId or "HarvestCandy"] or 0),
+            gear    = gear,
+            earned  = gold and s.gold and gold - s.gold,
+            uptime  = os.time() - s.start,
+        })
+    end
+end
+
 task.spawn(function()
-    local lastClick, lastSync, lastRunSync, lastSell = 0, 0, 0, 0
+    local lastClick, lastSync, lastRunSync, lastSell, lastHome = 0, 0, 0, 0, 0
     while alive() and gui.Parent do
         pcall(L.trySelectSlot)
         pcall(L.resumeTick)
@@ -3437,6 +3705,10 @@ task.spawn(function()
         elseif inAdventure() then setLive("Auto Run is off", false)
         elseif settings.auto then setLive("Auto Start armed", true)
         else setLive("Idle", false) end
+        if os.clock() - lastHome > 1 then
+            lastHome = os.clock()
+            pcall(homeTick)
+        end
         task.wait(0.2)
     end
 end)
@@ -3468,15 +3740,26 @@ local bubbleDot = new("Frame", {
     BackgroundColor3 = T.faint, BorderSizePixel = 0, ZIndex = 22,
 }, { corner(6), new("UIStroke", { Color = T.card, Thickness = 2 }) })
 
+local windowScale = new("UIScale", { Parent = window })
+local hideToken = 0
 local function setHidden(hidden)
+    hideToken += 1
+    local mine = hideToken
     if hidden then
-        window.Visible = false
-        bubble.Visible = true
-        bubble.Size = UDim2.fromOffset(20, 20)
-        tween(bubble, { Size = UDim2.fromOffset(58, 58) }, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
+        -- shrink the window a little, then swap it for the bubble
+        tween(windowScale, { Scale = 0.94 }, MOTION.leave)
+        task.delay(MOTION.leave.Time, function()
+            if mine ~= hideToken then return end -- reopened meanwhile
+            window.Visible = false
+            bubble.Visible = true
+            bubble.Size = UDim2.fromOffset(20, 20)
+            tween(bubble, { Size = UDim2.fromOffset(58, 58) }, MOTION.pop)
+        end)
     else
         bubble.Visible = false
         window.Visible = true
+        windowScale.Scale = 0.94
+        tween(windowScale, { Scale = 1 }, MOTION.enter)
     end
 end
 btnHide.MouseButton1Click:Connect(function() setHidden(true) end)
