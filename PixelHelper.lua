@@ -1434,7 +1434,7 @@ switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head bac
 local endCard = card(runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
 switchRow(endCard, "Auto Next Act", "Keep going after each act boss", "storyNextAct")
-sliderRow(endCard, "Leave after Act", "Takes Turn Back once this act is cleared", "storyExitAct", 0, 10, 1, "Act %d", "End")
+sliderRow(endCard, "Leave after Act", "Picks Return to the Castle after this act's boss", "storyExitAct", 0, 10, 1, "Act %d", "End")
 sectionLabel(endCard, "Torment  ·  all 3 lands are played")
 switchRow(endCard, "Auto Next Tier", "Start the next tier after land 3", "tormentNextTier")
 sliderRow(endCard, "Stop after Tier", "Back to castle once this tier is cleared", "tormentExitTier", 0, 99, 1, "Tier %d", "Never")
@@ -2570,10 +2570,18 @@ local function storyExitAct(state)
     return settings.storyExitAct -- 0 = never
 end
 
+-- already past the act we wanted to stop at (only a Turn Back card can get us out now)
 local function wantsToLeave(state)
     if modeOf(state) ~= "story" then return false end
     local exitAct = storyExitAct(state)
     return exitAct > 0 and (tonumber(state.act) or 1) > exitAct
+end
+
+-- at the story choice after an act boss (state.act = the act just cleared): stop here?
+local function leaveAfterThisAct(state)
+    if modeOf(state) ~= "story" then return false end
+    local exitAct = storyExitAct(state)
+    return exitAct > 0 and (tonumber(state.act) or 1) >= exitAct
 end
 
 local function choosePath(state)
@@ -2721,10 +2729,12 @@ local function tickRun()
         end
     elseif phase == "event" then
         handleEvent(state)
-    elseif phase == "story" and runOn("autoContinue") then
-        if once(tostring(state.id) .. ":story", 6) then
-            runSend(state, { action = "storyChoice", choice = "continue" })
-            setRunStatus("Story: continue")
+    elseif phase == "story" then
+        -- after an act boss: "FOLLOW THE LIGHT" (continue) or "RETURN TO THE CASTLE" (village)
+        local leave = leaveAfterThisAct(state)
+        if (leave or runOn("autoContinue")) and once(tostring(state.id) .. ":story:" .. tostring(state.act), 6) then
+            runSend(state, { action = "storyChoice", choice = leave and "village" or "continue" })
+            setRunStatus(leave and ("Act " .. tostring(state.act) .. " cleared: back to castle") or "Story: follow the Light")
         end
     elseif phase == "ended" then
         handleEnd(state)
@@ -3786,7 +3796,7 @@ end
 function Hook.onRunState(s)
     if s.id ~= nil and not runStartedAt[s.id] then runStartedAt[s.id] = os.time() end
     if s.phase ~= "ended" or not settings.webhookOn or not once("hook:" .. tostring(s.id)) then return end
-    task.delay(2, function() -- the last chest loot can arrive right after the end
+    task.delay(0.5, function() -- short: the teleport back to the lobby follows soon after the end
         local embed, result = runEmbed(s)
         if settings.hookVictoryOnly and result ~= "victory" then return end
         post(embed, function(ok, msg)
