@@ -1,4 +1,4 @@
-# PixelHelper
+# LAIKAHUB (PixelHelper)
 
 Helper script for Pixel Lineage (Roblox). Run this in your executor:
 

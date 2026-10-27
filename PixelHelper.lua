@@ -1,5 +1,5 @@
 --[[
-    Pixel Lineage Helper  ·  LAIKA dark theme, two-column tabs, cat bubble when hidden
+    LAIKAHUB (Pixel Lineage)  ·  LAIKA dark theme, two-column tabs, cat bubble when hidden
 
     Remotes (ReplicatedStorage.PlatformBattles.Remotes):
       RPGCommand (client -> server)
@@ -167,6 +167,8 @@ local settings = {
     autoBlight = false, blightDungeons = {}, blightDiffs = { normal = true, hard = true },
     slimeOrder = 1, slimeMaxTier = 0, blightKeep = 0, -- 1 highest slime first, 2 lowest; 0 = no limit
     autoUseKey = false, useKeyKind = 1, useKeyMaxTier = 0, keysPerRun = 3, -- 1 Torment keys only, 2 any key
+    -- discord webhook: post each finished run
+    webhookOn = false, webhookUrl = "", hookVictoryOnly = false, hookItems = true, hookHideName = false,
     -- window
     winW = 820, winH = 520,
 }
@@ -534,7 +536,8 @@ local Icons = { mod = nil, slots = {}, onReady = {} }
 
 -- tab / card name -> art key in PixelIcons.Art
 local ICON_KEYS = {
-    ["Home"] = "lineage", ["Activity"] = "hourglass", ["Community"] = "book",
+    ["Webhook"] = "nodeTreasure", ["Discord Webhook"] = "nodeTreasure", ["What to Send"] = "pouch",
+    ["Home"] = "lineage",["Activity"] = "hourglass", ["Community"] = "book",
     ["Gold"] = "coin", ["Potions"] = "potion", ["Candy"] = "candy", ["Gear"] = "pouch",
     ["Lobby"] = "duel", ["Auto Farm"] = "sword", ["Run"] = "nodeBoss", ["Auto Sell"] = "coin",
     ["Auto Forge"] = "cauldron", ["Settings"] = "book",
@@ -607,7 +610,7 @@ task.spawn(function()
         return found and found:IsA("ModuleScript") and require(found) or nil
     end)
     if not (ok and type(mod) == "table" and type(mod.Art) == "table") then
-        warn("[PixelHelper] PixelIcons not available: " .. tostring(mod))
+        warn("[LAIKAHUB] PixelIcons not available: " .. tostring(mod))
         return
     end
     Icons.mod = mod
@@ -701,7 +704,7 @@ local brandIcon = new("ImageLabel", {
     Parent = brand, BackgroundColor3 = T.raised, BorderSizePixel = 0, Size = UDim2.fromOffset(34, 34), Image = "",
     ScaleType = Enum.ScaleType.Fit,
 }, { corner(10) })
-label(brand, "Pixel Helper", 14, T.text, FONT_BOLD, { Position = UDim2.fromOffset(44, 1), Size = UDim2.new(1, -44, 0, 18) })
+label(brand, "LAIKAHUB", 14, T.text, FONT_BOLD, { Position = UDim2.fromOffset(44, 1), Size = UDim2.new(1, -44, 0, 18) })
 local classBadge = label(brand, "", 11, T.muted, FONT, { Position = UDim2.fromOffset(44, 19), Size = UDim2.new(1, -44, 0, 14) })
 
 -- scrolls when there are more tabs than the window is tall
@@ -976,7 +979,8 @@ local keyL, keyR       = addTab(nil, "⚿", "Keys", "Blight dungeon keys in the 
 local sellL, sellR     = addTab("Items", "$", "Auto Sell", "Sell gear you don't want, keep what you name")
 local forgeL, forgeR   = addTab(nil, "⚒", "Auto Forge", "Tick gear pictures and hone them to a target +")
 local petL, petR       = addTab(nil, "♣", "Pets", "Hatch eggs, release pets, buy Haunted Eggs")
-local setL, setR       = addTab("App", "≡", "Settings", "Window, files and unloading")
+local hookL, hookR     = addTab("App", "✉", "Webhook", "Post what you got from each run to Discord")
+local setL, setR       = addTab(nil, "≡", "Settings", "Window, files and unloading")
 
 ---------------------------------------------------------------- LOBBY TAB
 local function lobbyPayload()
@@ -1942,6 +1946,43 @@ ui.pets = {
     releaseStatus = releaseStatus, petList = petList,
 }
 end -- PETS TAB
+
+---------------------------------------------------------------- WEBHOOK TAB
+do
+local hookCard = card(hookL, 1, "✉", Color3.fromHex("5865f2"), "Discord Webhook", "Posts a message when a run ends", "webhookOn")
+local urlRow = row(hookCard, nil, nil, 76)
+label(urlRow, "Webhook link", 11, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 16) })
+local urlBox = new("TextBox", {
+    Parent = urlRow, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 32),
+    PlaceholderText = "https://discord.com/api/webhooks/…", PlaceholderColor3 = T.faint,
+    Text = settings.webhookUrl, FontFace = FONT, TextSize = 12, TextColor3 = T.text,
+    TextXAlignment = Enum.TextXAlignment.Left, ClipsDescendants = true,
+}, { corner(R_CTL), line(LINE2), pad(0, 10, 0, 10) })
+local testRow = row(hookCard, nil, nil, 50)
+local hookStatus = label(testRow, "Not tested yet", 11, T.muted, FONT, { Size = UDim2.new(1, -112, 1, 0), TextWrapped = true })
+local testBtn = primaryButton(testRow, "Send Test", 100)
+footerNote(hookCard, "Discord: Channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.")
+
+local function saveUrl()
+    local text = urlBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    urlBox.Text = text
+    if text ~= settings.webhookUrl then
+        settings.webhookUrl = text
+        save()
+        hookStatus.Text, hookStatus.TextColor3 = "Link saved: press Send Test", T.muted
+    end
+end
+urlBox.FocusLost:Connect(saveUrl)
+
+local sendCard = card(hookR, 1, "☰", T.amber, "What to Send", "Choose what the message shows")
+switchRow(sendCard, "Victories only", "Skip runs you lost or left", "hookVictoryOnly")
+switchRow(sendCard, "List items", "Every gear, egg and material dropped this run", "hookItems")
+switchRow(sendCard, "Hide my name", "Don't show your Roblox name in Discord", "hookHideName")
+footerNote(sendCard, "Each message has the result, stage, acts cleared, battles, gold, knowledge or candy, valor, your gold total and the run time.")
+
+ui.hook = { status = hookStatus, testBtn = testBtn, saveUrl = saveUrl }
+end -- WEBHOOK TAB
 
 ---------------------------------------------------------------- SETTINGS TAB
 do
@@ -2937,7 +2978,7 @@ local function drawPicture(parent, entry)
             local key, palette = PI.GearIcon(entry.desc, entry.kind)
             drawn = Icons.draw(parent, key, 52, palette, parent.ZIndex + 1) ~= nil
         end)
-        if not ok then warn("[PixelHelper] gear picture: " .. tostring(err)) end
+        if not ok then warn("[LAIKAHUB] gear picture: " .. tostring(err)) end
     end
     if not drawn then
         label(parent, string.sub(entry.kind or "?", 1, 1), 22, RARITY_COLOR[entry.rarity] or T.text, FONT_BOLD, {
@@ -3572,6 +3613,205 @@ function keyTick()
 end
 end -- KEYS LOGIC
 
+---------------------------------------------------------------- WEBHOOK LOGIC
+-- Same numbers as the game's end-of-run window: RunState.earned { gold, knowledge, candy, valor },
+-- acts / lands cleared, battles. Items come from "RunGearDrop" and "BossChestLoot" during the run.
+local Hook = {}
+do
+local httpRequest = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
+local COLOR = { victory = 0x22c55e, retreat = 0xf59e0b, lost = 0xef4444, test = 0x5865f2 }
+local RARITY_DOT = { Common = "⚪", Uncommon = "🟢", Rare = "🔵", Epic = "🟣", Legendary = "🟠", Secret = "💗" }
+local RARITY_RANK = {}
+for i, r in ipairs(RARITIES) do RARITY_RANK[r.id] = i end
+
+local haul = { runId = nil, items = {} } -- items: [name|rarity] = { name, rarity, qty }
+local runStartedAt = {}                  -- [runId] = os.time() when we first saw it
+
+-- only ever post to Discord's own webhook endpoint
+local function validUrl(url)
+    if type(url) ~= "string" then return false end
+    return url:match("^https://[%w%.]*discord%.com/api/webhooks/%d+/[%w%-_]+") ~= nil
+        or url:match("^https://[%w%.]*discordapp%.com/api/webhooks/%d+/[%w%-_]+") ~= nil
+end
+
+local function short(n)
+    n = math.floor(tonumber(n) or 0)
+    local s, k = tostring(math.abs(n)), 0
+    repeat s, k = s:gsub("^(%d+)(%d%d%d)", "%1,%2") until k == 0
+    return (n < 0 and "-" or "") .. s
+end
+
+local function titleCase(s)
+    return (tostring(s):gsub("_", " "):gsub("(%a)([%w]*)", function(a, b) return a:upper() .. b end))
+end
+
+local function playerLine()
+    if settings.hookHideName then return "Hidden player" end
+    return LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")"
+end
+
+-- posts { embeds = { embed } }; calls done(ok, message)
+local function post(embed, done)
+    local url = settings.webhookUrl
+    if not validUrl(url) then done(false, "That isn't a Discord webhook link") return end
+    if not httpRequest then done(false, "Your executor can't send web requests") return end
+    embed.footer = { text = "LAIKAHUB · Pixel Lineage" }
+    embed.timestamp = DateTime.now():ToIsoDate()
+    task.spawn(function()
+        local ok, res = pcall(httpRequest, {
+            Url = url, Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode({ username = "LAIKAHUB", embeds = { embed } }),
+        })
+        local code = ok and type(res) == "table" and tonumber(res.StatusCode) or nil
+        if code and code >= 200 and code < 300 then
+            done(true, "Sent")
+        elseif code == 429 then
+            done(false, "Discord says slow down (rate limit)")
+        elseif code then
+            done(false, "Discord answered " .. code .. (code == 404 and ": webhook was deleted" or ""))
+        else
+            done(false, "Request failed: " .. tostring(res))
+        end
+    end)
+end
+
+local function setStatus(ok, text)
+    ui.hook.status.Text = text
+    ui.hook.status.TextColor3 = ok and T.green or T.red
+end
+
+---------------- collecting drops
+local function addItem(name, rarity, qty)
+    if run and haul.runId ~= run.id then haul = { runId = run.id, items = {} } end -- a new run: start over
+    name = tostring(name or "?")
+    local key = name .. "|" .. tostring(rarity)
+    local it = haul.items[key] or { name = name, rarity = rarity, qty = 0 }
+    it.qty += math.max(1, math.floor(tonumber(qty) or 1))
+    haul.items[key] = it
+end
+
+function Hook.onGearDrop(d)
+    addItem(d.name or d.itemId, d.rarity, d.quantity)
+end
+
+function Hook.onChestLoot(d)
+    for _, v in ipairs(type(d.items) == "table" and d.items or {}) do
+        if type(v) == "table" then addItem(v.name or v.id, v.rarity, v.quantity) end
+    end
+end
+
+---------------- the end-of-run message
+local function stageName(s)
+    if s.land == "haunted" then return "Halloween · " .. titleCase(tostring(s.difficulty or ""):gsub("^harvest_", "")) end
+    local tier = tonumber(s.tormentTier) or tonumber(tostring(s.difficulty or ""):match("^torment(%d+)$"))
+    if tier then return "Torment " .. tier end
+    return "Story · " .. titleCase(s.difficulty or "?") .. " · Act " .. tostring(s.startAct or 1)
+end
+
+-- "ACTS CLEARED 3 / 5" the way the game counts it
+local function clearedField(s, victory)
+    if type(s.gauntlet) == "table" then
+        local count = tonumber(s.gauntlet.count) or 3
+        local cleared = victory and count or math.max(0, (tonumber(s.gauntlet.index) or 1) - 1)
+        return "Lands cleared", string.format("%d / %d", cleared, count)
+    end
+    local start, act = tonumber(s.startAct) or 1, tonumber(s.act) or 1
+    local total = (tonumber(s.actCount) or 1) - start + 1
+    local cleared = victory and (act - start + 1) or math.max(0, act - start)
+    return "Acts cleared", string.format("%d / %d", cleared, math.max(total, cleared))
+end
+
+local function itemLines()
+    local list = {}
+    if haul.runId == nil or haul.runId == (run and run.id) then
+        for _, it in pairs(haul.items) do table.insert(list, it) end
+    end
+    table.sort(list, function(a, b)
+        local ra, rb = RARITY_RANK[a.rarity] or 0, RARITY_RANK[b.rarity] or 0
+        if ra ~= rb then return ra > rb end
+        return a.name < b.name
+    end)
+    local lines = {}
+    for _, it in ipairs(list) do
+        local line = string.format("%s **%s**%s%s", RARITY_DOT[it.rarity] or "▫️", it.name,
+            it.rarity and (" · " .. it.rarity) or "", it.qty > 1 and (" ×" .. it.qty) or "")
+        if #table.concat(lines, "\n") + #line > 980 then
+            table.insert(lines, string.format("…and %d more", #list - #lines))
+            break
+        end
+        table.insert(lines, line)
+    end
+    return #lines > 0 and table.concat(lines, "\n") or "Nothing dropped"
+end
+
+local function runEmbed(s)
+    local result = s.result == "victory" and "victory" or (s.result == "retreat" and "retreat" or "lost")
+    local earned = type(s.earned) == "table" and s.earned or {}
+    local clearedName, clearedValue = clearedField(s, result == "victory")
+    local fields = {
+        { name = "Stage", value = stageName(s), inline = true },
+        { name = clearedName, value = clearedValue, inline = true },
+        { name = "Battles", value = tostring(s.battles or 0), inline = true },
+        { name = "💰 Gold", value = "+" .. short(earned.gold), inline = true },
+    }
+    if s.land == "haunted" then
+        table.insert(fields, { name = "🍬 Candy", value = "+" .. short(earned.candy), inline = true })
+    else
+        table.insert(fields, { name = "📘 Knowledge", value = "+" .. short(earned.knowledge), inline = true })
+    end
+    if (tonumber(earned.valor) or 0) > 0 then
+        table.insert(fields, { name = "⚔️ Valor", value = "+" .. short(earned.valor), inline = true })
+    end
+    local started = runStartedAt[s.id]
+    if started then
+        local secs = os.time() - started
+        table.insert(fields, { name = "⏱️ Run time", value = string.format("%dm %02ds", secs // 60, secs % 60), inline = true })
+    end
+    if profile and profile.gold then
+        table.insert(fields, { name = "🏦 Gold total", value = short(profile.gold), inline = true })
+    end
+    if settings.hookItems then
+        table.insert(fields, { name = "🎁 Loot", value = itemLines(), inline = false })
+    end
+    return {
+        title = (result == "victory" and "🏆 RUN COMPLETE!") or (result == "retreat" and "↩️ RETREATED") or "💀 RUN OVER",
+        description = string.format("**%s** · %s", playerLine(), myClass()),
+        color = COLOR[result],
+        fields = fields,
+    }, result
+end
+
+-- called with every RunState
+function Hook.onRunState(s)
+    if s.id ~= nil and not runStartedAt[s.id] then runStartedAt[s.id] = os.time() end
+    if s.phase ~= "ended" or not settings.webhookOn or not once("hook:" .. tostring(s.id)) then return end
+    task.delay(2, function() -- the last chest loot can arrive right after the end
+        local embed, result = runEmbed(s)
+        if settings.hookVictoryOnly and result ~= "victory" then return end
+        post(embed, function(ok, msg)
+            setStatus(ok, ok and ("Posted run result at " .. os.date("%H:%M")) or msg)
+        end)
+    end)
+end
+
+ui.hook.testBtn.MouseButton1Click:Connect(function()
+    ui.hook.saveUrl()
+    ui.hook.status.Text, ui.hook.status.TextColor3 = "Sending…", T.muted
+    post({
+        title = "✅ Webhook connected",
+        description = string.format("**%s** · %s\nRun results will show up here.", playerLine(), myClass()),
+        color = COLOR.test,
+        fields = {
+            { name = "💰 Gold", value = profile and short(profile.gold) or "—", inline = true },
+            { name = "🧪 Potions", value = profile and short(profile.potions) or "—", inline = true },
+        },
+    }, function(ok, msg)
+        setStatus(ok, ok and "Test sent: check your channel" or msg)
+    end)
+end)
+end -- WEBHOOK LOGIC
+
 ---------------------------------------------------------------- events
 RPGState.OnClientEvent:Connect(function(name, data)
     if not alive() then return end
@@ -3602,6 +3842,11 @@ RPGState.OnClientEvent:Connect(function(name, data)
     elseif name == "RunState" and type(data) == "table" then
         if not run or run.id ~= data.id or run.round ~= data.round or run.phase ~= data.phase then runAt = os.clock() end
         run = data
+        Hook.onRunState(data)
+    elseif name == "RunGearDrop" and type(data) == "table" then
+        Hook.onGearDrop(data)
+    elseif name == "BossChestLoot" and type(data) == "table" then
+        Hook.onChestLoot(data)
     elseif name == "Profile" and type(data) == "table" then
         local p = data.profile or data
         if type(p) == "table" and (p.gearBag or p.gear) then
