@@ -52,7 +52,7 @@ local OLD_SAVE    = "PixelHelper_Settings.json" -- shared file from older versio
 local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper.lua"
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
-local DISCORD_URL = "https://discord.gg/rQdvdtsUEc" -- bug reports and help
+local DISCORD_URL = "https://discord.gg/c2GJGSnAwr" -- bug reports and help
 local VERSION     = "1.5.0" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
