@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/rQdvdtsUEc" -- bug reports and help
-local VERSION     = "1.4.1" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.4.2" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -1435,7 +1435,7 @@ switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head bac
 local endCard = card(runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
 switchRow(endCard, "Auto Next Act", "Off: stop after the first act (unless Leave after Act is set)", "storyNextAct")
-sliderRow(endCard, "Leave after Act", "Picks Return to the Castle after this act's boss", "storyExitAct", 0, 10, 1, "Act %d", "End")
+sliderRow(endCard, "Leave after Act", "Goes home from the map once this act's boss is down", "storyExitAct", 0, 10, 1, "Act %d", "End")
 sectionLabel(endCard, "Torment  ·  all 3 lands are played")
 switchRow(endCard, "Auto Next Tier", "Start the next tier after land 3", "tormentNextTier")
 sliderRow(endCard, "Stop after Tier", "Back to castle once this tier is cleared", "tormentExitTier", 0, 99, 1, "Tier %d", "Never")
@@ -1977,7 +1977,7 @@ end
 urlBox.FocusLost:Connect(saveUrl)
 
 local sendCard = card(hookR, 1, "☰", T.amber, "What to Send", "Choose what the message shows")
-switchRow(sendCard, "Victories only", "Skip runs you lost or left", "hookVictoryOnly")
+switchRow(sendCard, "Skip lost runs", "Only post runs you won or left on purpose", "hookVictoryOnly")
 switchRow(sendCard, "List items", "Every gear, egg and material dropped this run", "hookItems")
 switchRow(sendCard, "Hide my name", "Don't show your Roblox name in Discord", "hookHideName")
 footerNote(sendCard, "Each message has the result, stage, acts cleared, battles, gold, knowledge or candy, valor, your gold total and the run time.")
@@ -2581,6 +2581,13 @@ local function wantsToLeave(state)
     return exitAct > 0 and (tonumber(state.act) or 1) > exitAct
 end
 
+local function hasCard(state, cardType)
+    for _, c in ipairs(type(state.choices) == "table" and state.choices or {}) do
+        if type(c) == "table" and c.type == cardType then return true end
+    end
+    return false
+end
+
 -- at the story choice after an act boss (state.act = the act just cleared): stop here?
 local function leaveAfterThisAct(state)
     if modeOf(state) ~= "story" then return false end
@@ -2721,6 +2728,15 @@ local function tickRun()
     local phase = state.phase
     if phase == "choose" and runOn("autoPath") then
         if os.clock() < (R.holdVoteUntil or 0) then return end -- a dungeon key is being offered
+        -- past the act we wanted: the game's map button "RETURN HOME" (RunAction "abandon").
+        -- Turn Back cards are switched off in RunConfig, and the act-end choice only comes after act 5.
+        if not state.dungeon and wantsToLeave(state) and not hasCard(state, "retreat") then
+            if once(tostring(state.id) .. ":home", 8) then
+                runSend(state, { action = "abandon" })
+                setRunStatus("Act " .. tostring(storyExitAct(state)) .. " cleared: Return Home")
+            end
+            return
+        end
         for _, v in ipairs(type(state.votes) == "table" and state.votes or {}) do
             if type(v) == "table" and v.userId == LocalPlayer.UserId then return end
         end
@@ -3766,7 +3782,9 @@ local function itemLines()
 end
 
 local function runEmbed(s)
-    local result = s.result == "victory" and "victory" or (s.result == "retreat" and "retreat" or "lost")
+    -- going home on purpose (Turn Back, Return Home) counts as a retreat, not a loss
+    local LEFT = { retreat = true, abandon = true, abandoned = true, home = true, village = true }
+    local result = s.result == "victory" and "victory" or (LEFT[s.result] and "retreat" or "lost")
     local earned = type(s.earned) == "table" and s.earned or {}
     local clearedName, clearedValue = clearedField(s, result == "victory")
     local fields = {
@@ -3808,7 +3826,7 @@ function Hook.onRunState(s)
     if s.phase ~= "ended" or not settings.webhookOn or not once("hook:" .. tostring(s.id)) then return end
     task.delay(0.5, function() -- short: the teleport back to the lobby follows soon after the end
         local embed, result = runEmbed(s)
-        if settings.hookVictoryOnly and result ~= "victory" then return end
+        if settings.hookVictoryOnly and result == "lost" then return end
         post(embed, function(ok, msg)
             setStatus(ok, ok and ("Posted run result at " .. os.date("%H:%M")) or msg)
         end)
