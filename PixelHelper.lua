@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/rQdvdtsUEc" -- bug reports and help
-local VERSION     = "1.4.2" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.5.0" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -3652,17 +3652,36 @@ end -- KEYS LOGIC
 ---------------------------------------------------------------- WEBHOOK LOGIC
 -- Same numbers as the game's end-of-run window: RunState.earned { gold, knowledge, candy, valor },
 -- acts / lands cleared, battles. Items come from "RunGearDrop" and "BossChestLoot" during the run.
+--
+-- Message layout (Discord embed):
+--   author    your avatar + name · class            (or the LAIKAHUB cat when "Hide my name" is on)
+--   title     🏆 Victory — Story · Nightmare
+--   line      acts · battles · run time as small chips
+--   fields    Gold / Knowledge (or Candy) / Valor / Bank, each in a green "+" box
+--   loot      grouped by rarity, best first, with a rarity summary in the field title
+--   footer    LAIKAHUB · Pixel Lineage + time
 local Hook = {}
 do
 local httpRequest = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
-local COLOR = { victory = 0x22c55e, retreat = 0xf59e0b, lost = 0xef4444, test = 0x5865f2 }
-local RARITY_DOT = { Common = "⚪", Uncommon = "🟢", Rare = "🔵", Epic = "🟣", Legendary = "🟠", Secret = "💗" }
+
+local RESULT = {
+    victory = { title = "🏆  Victory",   color = 0x22c55e },
+    retreat = { title = "↩️  Went Home", color = 0xf59e0b },
+    lost    = { title = "💀  Defeated",  color = 0xef4444 },
+}
+-- going home on purpose (Turn Back, Return Home, Return to the Castle) is not a loss
+local LEFT_ON_PURPOSE = { retreat = true, abandon = true, abandoned = true, home = true, village = true }
+local RARITY_MARK = { Common = "⬜", Uncommon = "🟩", Rare = "🟦", Epic = "🟪", Legendary = "🟧", Secret = "💗" }
 local RARITY_RANK = {}
 for i, r in ipairs(RARITIES) do RARITY_RANK[r.id] = i end
+-- chest entries that are currencies, already counted in the totals above the loot
+local NOT_LOOT = { Gold = true, Knowledge = true, Potion = true, HarvestCandy = true, Valor = true }
 
-local haul = { runId = nil, items = {} } -- items: [name|rarity] = { name, rarity, qty }
-local runStartedAt = {}                  -- [runId] = os.time() when we first saw it
+local haul = { runId = nil, items = {}, sold = 0, soldGold = 0 } -- items: [name|rarity] = { name, rarity, qty }
+local runStartedAt = {}                                          -- [runId] = os.time() when we first saw it
+local avatarUrl                                                  -- cached headshot link for the author line
 
+---------------- small helpers
 -- only ever post to Discord's own webhook endpoint
 local function validUrl(url)
     if type(url) ~= "string" then return false end
@@ -3670,34 +3689,78 @@ local function validUrl(url)
         or url:match("^https://[%w%.]*discordapp%.com/api/webhooks/%d+/[%w%-_]+") ~= nil
 end
 
-local function short(n)
+local function commas(n)
     n = math.floor(tonumber(n) or 0)
     local s, k = tostring(math.abs(n)), 0
     repeat s, k = s:gsub("^(%d+)(%d%d%d)", "%1,%2") until k == 0
     return (n < 0 and "-" or "") .. s
 end
 
+-- 412052962 -> "412.1M"
+local function compact(n)
+    n = tonumber(n) or 0
+    for _, u in ipairs({ { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }) do
+        if math.abs(n) >= u[1] then return (string.format("%.1f", n / u[1]):gsub("%.0$", "")) .. u[2] end
+    end
+    return commas(n)
+end
+
+local function countKeys(t)
+    local n = 0
+    for _ in pairs(type(t) == "table" and t or {}) do n += 1 end
+    return n
+end
+
 local function titleCase(s)
     return (tostring(s):gsub("_", " "):gsub("(%a)([%w]*)", function(a, b) return a:upper() .. b end))
 end
 
-local function playerLine()
-    if settings.hookHideName then return "Hidden player" end
-    return LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")"
+local function duration(secs)
+    if secs >= 3600 then return string.format("%dh %02dm", secs // 3600, secs % 3600 // 60) end
+    return string.format("%dm %02ds", secs // 60, secs % 60)
 end
 
--- posts { embeds = { embed } }; calls done(ok, message)
-local function post(embed, done)
+-- a number in a green diff box: reads as a reward chip in Discord
+local function plusBox(n) return "```diff\n+ " .. commas(n) .. "\n```" end
+local function plainBox(text) return "```\n" .. text .. "\n```" end
+
+-- headshot link from Roblox's thumbnail service (fetched once)
+local function avatar()
+    if avatarUrl == nil then
+        avatarUrl = false
+        pcall(function()
+            local body = game:HttpGet("https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="
+                .. LocalPlayer.UserId .. "&size=150x150&format=Png&isCircular=true")
+            local data = HttpService:JSONDecode(body).data
+            avatarUrl = data and data[1] and data[1].imageUrl or false
+        end)
+    end
+    return avatarUrl or nil
+end
+
+local function author()
+    if settings.hookHideName then return { name = "LAIKAHUB  ·  Run Report", icon_url = ICON_URL } end
+    return {
+        name = string.format("%s (@%s)  ·  %s", LocalPlayer.DisplayName, LocalPlayer.Name, myClass()),
+        icon_url = avatar(),
+    }
+end
+
+-- posts one embed; done(ok, message) runs when Discord answers
+local function post(build, done)
     local url = settings.webhookUrl
     if not validUrl(url) then done(false, "That isn't a Discord webhook link") return end
     if not httpRequest then done(false, "Your executor can't send web requests") return end
-    embed.footer = { text = "LAIKAHUB · Pixel Lineage" }
-    embed.timestamp = DateTime.now():ToIsoDate()
     task.spawn(function()
+        local embed = build()
+        embed.author = author()
+        if not settings.hookHideName then embed.thumbnail = { url = ICON_URL } end -- the cat is already the author icon when hidden
+        embed.footer = { text = "LAIKAHUB  •  Pixel Lineage", icon_url = ICON_URL }
+        embed.timestamp = DateTime.now():ToIsoDate()
         local ok, res = pcall(httpRequest, {
             Url = url, Method = "POST",
             Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode({ username = "LAIKAHUB", embeds = { embed } }),
+            Body = HttpService:JSONEncode({ username = "LAIKAHUB", avatar_url = ICON_URL, embeds = { embed } }),
         })
         local code = ok and type(res) == "table" and tonumber(res.StatusCode) or nil
         if code and code >= 200 and code < 300 then
@@ -3718,9 +3781,19 @@ local function setStatus(ok, text)
 end
 
 ---------------- collecting drops
-local function addItem(name, rarity, qty)
-    if run and haul.runId ~= run.id then haul = { runId = run.id, items = {} } end -- a new run: start over
-    name = tostring(name or "?")
+local function addItem(id, name, rarity, qty)
+    if run and haul.runId ~= run.id then -- a new run: start over
+        haul = { runId = run.id, items = {}, sold = 0, soldGold = 0 }
+    end
+    name = tostring(name or id or "?")
+    -- "Auto-sold 3 (+60 gold)": the game sold drops for you; keep a total instead of a loot line
+    local sold, gold = name:match("^Auto%-sold (%d+) %(%+(%d+) gold%)")
+    if sold then
+        haul.sold += tonumber(sold)
+        haul.soldGold += tonumber(gold)
+        return
+    end
+    if NOT_LOOT[tostring(id)] or name:match("^%d") then return end -- "420 Gold", "112 Knowledge"
     local key = name .. "|" .. tostring(rarity)
     local it = haul.items[key] or { name = name, rarity = rarity, qty = 0 }
     it.qty += math.max(1, math.floor(tonumber(qty) or 1))
@@ -3728,37 +3801,38 @@ local function addItem(name, rarity, qty)
 end
 
 function Hook.onGearDrop(d)
-    addItem(d.name or d.itemId, d.rarity, d.quantity)
+    addItem(d.itemId, d.name, d.rarity, d.quantity)
 end
 
 function Hook.onChestLoot(d)
     for _, v in ipairs(type(d.items) == "table" and d.items or {}) do
-        if type(v) == "table" then addItem(v.name or v.id, v.rarity, v.quantity) end
+        if type(v) == "table" then addItem(v.id, v.name, v.rarity, v.quantity) end
     end
 end
 
 ---------------- the end-of-run message
 local function stageName(s)
-    if s.land == "haunted" then return "Halloween · " .. titleCase(tostring(s.difficulty or ""):gsub("^harvest_", "")) end
+    if s.land == "haunted" then return "Halloween · " .. titleCase((tostring(s.difficulty or ""):gsub("^harvest_", ""))) end
     local tier = tonumber(s.tormentTier) or tonumber(tostring(s.difficulty or ""):match("^torment(%d+)$"))
     if tier then return "Torment " .. tier end
-    return "Story · " .. titleCase(s.difficulty or "?") .. " · Act " .. tostring(s.startAct or 1)
+    return "Story · " .. titleCase(s.difficulty or "?")
 end
 
--- "ACTS CLEARED 3 / 5" the way the game counts it
-local function clearedField(s, victory)
+-- "2 / 10 acts" the way the game counts it
+local function clearedText(s, victory)
     if type(s.gauntlet) == "table" then
         local count = tonumber(s.gauntlet.count) or 3
         local cleared = victory and count or math.max(0, (tonumber(s.gauntlet.index) or 1) - 1)
-        return "Lands cleared", string.format("%d / %d", cleared, count)
+        return string.format("%d / %d lands", cleared, count)
     end
     local start, act = tonumber(s.startAct) or 1, tonumber(s.act) or 1
     local total = (tonumber(s.actCount) or 1) - start + 1
     local cleared = victory and (act - start + 1) or math.max(0, act - start)
-    return "Acts cleared", string.format("%d / %d", cleared, math.max(total, cleared))
+    return string.format("%d / %d acts", cleared, math.max(total, cleared))
 end
 
-local function itemLines()
+-- loot field: title with a rarity summary, body grouped best rarity first
+local function lootField()
     local list = {}
     if haul.runId == nil or haul.runId == (run and run.id) then
         for _, it in pairs(haul.items) do table.insert(list, it) end
@@ -3768,54 +3842,64 @@ local function itemLines()
         if ra ~= rb then return ra > rb end
         return a.name < b.name
     end)
-    local lines = {}
+
+    local total, perRarity = 0, {}
     for _, it in ipairs(list) do
-        local line = string.format("%s **%s**%s%s", RARITY_DOT[it.rarity] or "▫️", it.name,
-            it.rarity and (" · " .. it.rarity) or "", it.qty > 1 and (" ×" .. it.qty) or "")
-        if #table.concat(lines, "\n") + #line > 980 then
-            table.insert(lines, string.format("…and %d more", #list - #lines))
+        total += it.qty
+        perRarity[it.rarity or "?"] = (perRarity[it.rarity or "?"] or 0) + it.qty
+    end
+    local summary = {}
+    for i = #RARITIES, 1, -1 do
+        local id = RARITIES[i].id
+        if perRarity[id] then table.insert(summary, perRarity[id] .. " " .. id) end
+    end
+
+    local lines = {}
+    for i, it in ipairs(list) do
+        local line = string.format("%s  %s%s", RARITY_MARK[it.rarity] or "▫️", it.name, it.qty > 1 and ("  `×" .. it.qty .. "`") or "")
+        if #table.concat(lines, "\n") + #line > 900 then
+            table.insert(lines, string.format("*…and %d more*", #list - i + 1))
             break
         end
         table.insert(lines, line)
     end
-    return #lines > 0 and table.concat(lines, "\n") or "Nothing dropped"
+    if haul.sold > 0 then
+        table.insert(lines, string.format("\n♻️  Auto-sold **%d** for **%s** gold", haul.sold, commas(haul.soldGold)))
+    end
+
+    return {
+        name = total > 0 and string.format("🎁  Loot  ·  %d item%s  ·  %s", total, total == 1 and "" or "s", table.concat(summary, " · "))
+            or "🎁  Loot",
+        value = #lines > 0 and table.concat(lines, "\n") or "*Nothing dropped this run*",
+        inline = false,
+    }
 end
 
 local function runEmbed(s)
-    -- going home on purpose (Turn Back, Return Home) counts as a retreat, not a loss
-    local LEFT = { retreat = true, abandon = true, abandoned = true, home = true, village = true }
-    local result = s.result == "victory" and "victory" or (LEFT[s.result] and "retreat" or "lost")
+    local result = s.result == "victory" and "victory" or (LEFT_ON_PURPOSE[s.result] and "retreat" or "lost")
     local earned = type(s.earned) == "table" and s.earned or {}
-    local clearedName, clearedValue = clearedField(s, result == "victory")
-    local fields = {
-        { name = "Stage", value = stageName(s), inline = true },
-        { name = clearedName, value = clearedValue, inline = true },
-        { name = "Battles", value = tostring(s.battles or 0), inline = true },
-        { name = "💰 Gold", value = "+" .. short(earned.gold), inline = true },
-    }
+
+    local chips = { "`" .. clearedText(s, result == "victory") .. "`", "`" .. tostring(s.battles or 0) .. " battles`" }
+    if runStartedAt[s.id] then table.insert(chips, "`⏱ " .. duration(os.time() - runStartedAt[s.id]) .. "`") end
+
+    local fields = { { name = "💰  Gold", value = plusBox(earned.gold), inline = true } }
     if s.land == "haunted" then
-        table.insert(fields, { name = "🍬 Candy", value = "+" .. short(earned.candy), inline = true })
+        table.insert(fields, { name = "🍬  Candy", value = plusBox(earned.candy), inline = true })
     else
-        table.insert(fields, { name = "📘 Knowledge", value = "+" .. short(earned.knowledge), inline = true })
+        table.insert(fields, { name = "📘  Knowledge", value = plusBox(earned.knowledge), inline = true })
     end
     if (tonumber(earned.valor) or 0) > 0 then
-        table.insert(fields, { name = "⚔️ Valor", value = "+" .. short(earned.valor), inline = true })
-    end
-    local started = runStartedAt[s.id]
-    if started then
-        local secs = os.time() - started
-        table.insert(fields, { name = "⏱️ Run time", value = string.format("%dm %02ds", secs // 60, secs % 60), inline = true })
+        table.insert(fields, { name = "⚔️  Valor", value = plusBox(earned.valor), inline = true })
     end
     if profile and profile.gold then
-        table.insert(fields, { name = "🏦 Gold total", value = short(profile.gold), inline = true })
+        table.insert(fields, { name = "🏦  Bank", value = plainBox(compact(profile.gold)), inline = true })
     end
-    if settings.hookItems then
-        table.insert(fields, { name = "🎁 Loot", value = itemLines(), inline = false })
-    end
+    if settings.hookItems then table.insert(fields, lootField()) end
+
     return {
-        title = (result == "victory" and "🏆 RUN COMPLETE!") or (result == "retreat" and "↩️ RETREATED") or "💀 RUN OVER",
-        description = string.format("**%s** · %s", playerLine(), myClass()),
-        color = COLOR[result],
+        title = RESULT[result].title .. "  —  " .. stageName(s),
+        description = table.concat(chips, "  "),
+        color = RESULT[result].color,
         fields = fields,
     }, result
 end
@@ -3824,27 +3908,28 @@ end
 function Hook.onRunState(s)
     if s.id ~= nil and not runStartedAt[s.id] then runStartedAt[s.id] = os.time() end
     if s.phase ~= "ended" or not settings.webhookOn or not once("hook:" .. tostring(s.id)) then return end
-    task.delay(0.5, function() -- short: the teleport back to the lobby follows soon after the end
-        local embed, result = runEmbed(s)
-        if settings.hookVictoryOnly and result == "lost" then return end
-        post(embed, function(ok, msg)
-            setStatus(ok, ok and ("Posted run result at " .. os.date("%H:%M")) or msg)
-        end)
+    local embed, result = runEmbed(s) -- built now, before the teleport clears the run
+    if settings.hookVictoryOnly and result == "lost" then return end
+    post(function() return embed end, function(ok, msg)
+        setStatus(ok, ok and ("Posted run result at " .. os.date("%H:%M")) or msg)
     end)
 end
 
 ui.hook.testBtn.MouseButton1Click:Connect(function()
     ui.hook.saveUrl()
     ui.hook.status.Text, ui.hook.status.TextColor3 = "Sending…", T.muted
-    post({
-        title = "✅ Webhook connected",
-        description = string.format("**%s** · %s\nRun results will show up here.", playerLine(), myClass()),
-        color = COLOR.test,
-        fields = {
-            { name = "💰 Gold", value = profile and short(profile.gold) or "—", inline = true },
-            { name = "🧪 Potions", value = profile and short(profile.potions) or "—", inline = true },
-        },
-    }, function(ok, msg)
+    post(function()
+        return {
+            title = "✅  Webhook connected",
+            description = "Run reports from **LAIKAHUB** will show up in this channel.",
+            color = 0x8b8cff,
+            fields = {
+                { name = "💰  Gold", value = plainBox(profile and commas(profile.gold) or "—"), inline = true },
+                { name = "🧪  Potions", value = plainBox(profile and commas(profile.potions) or "—"), inline = true },
+                { name = "🎒  Gear", value = plainBox(profile and tostring(countKeys(profile.gearBag)) or "—"), inline = true },
+            },
+        }
+    end, function(ok, msg)
         setStatus(ok, ok and "Test sent: check your channel" or msg)
     end)
 end)
