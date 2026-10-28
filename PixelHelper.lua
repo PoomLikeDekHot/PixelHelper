@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/c2GJGSnAwr" -- bug reports and help
-local VERSION     = "1.6.0" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.7.0" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -89,6 +89,15 @@ local MODES = {
     { id = "halloween", name = "Halloween",
       difficulties = { { name = "Normal", id = "harvest_normal" }, { name = "Hard", id = "harvest_hard" }, { name = "Nightmare", id = "harvest_nightmare" } } },
     { id = "torment", name = "Torment", tiers = 99 },
+}
+
+-- RunModifiers.List. Story and Halloween only: Torment shows its Gauntlet row instead.
+local MODIFIERS = {
+    { id = "none",          name = "No Modifier",        text = "The usual adventure." },
+    { id = "elite_patrols", name = "Elite Patrols",      text = "More elite paths. Elites give extra gold and XP." },
+    { id = "volatile",      name = "Volatile Enemies",   text = "Foes burst on defeat. Extra gold and XP." },
+    { id = "exhausting",    name = "Exhausting Battles", text = "Rest heals half. Boss chests pay extra gold." },
+    { id = "boss_rush",     name = "Boss Rush",          text = "Bosses only. Shorter, with less currency and loot." },
 }
 
 -- path card types (RunConfig.Events + RunConfig.NodeTypes). "boss" is forced, "retreat" is only used to exit.
@@ -129,13 +138,13 @@ local RARITIES = {
 
 ---------------------------------------------------------------- settings
 local settings = {
-    tab = 1,
+    tab = 1, antiAfk = true,
     -- lobby
-    mode = 1, diff = { 1, 1 }, act = 1, tier = 1, auto = false,
+    mode = 1, diff = { 1, 1 }, act = 1, tier = 1, modifier = 1, auto = false,
     autoSlot = false, slot = 1, -- pick this character on the select screen
     autoRejoin = true, rejoinAfter = 40, lobbyPlaceId = 0, -- stuck on the boot screen -> rejoin
     -- combat
-    combat = false, autoAttack = true, perfectAttack = true, hideMinigame = true,
+    combat = false, autoAttack = true, perfectAttack = true, hideMinigame = true, hideScrollFx = true,
     perfectDodge = true, autoGuard = true,
     autoPotion = true, potionHp = 35,
     autoSkill = false, attackIfNoMana = true, scrollFirst = false,
@@ -984,20 +993,28 @@ local hookL, hookR     = addTab("App", "✉", "Webhook", "Post what you got from
 local setL, setR       = addTab(nil, "≡", "Settings", "Window, files and unloading")
 
 ---------------------------------------------------------------- LOBBY TAB
+-- the picked modifier, or nil when the run uses none (or the mode has no modifiers)
+local function lobbyModifier()
+    local m = MODES[settings.mode].id ~= "torment" and MODIFIERS[settings.modifier]
+    return m and m.id ~= "none" and m or nil
+end
+
 local function lobbyPayload()
     local mode = MODES[settings.mode]
     if mode.id == "torment" then
         return { action = "solo", difficulty = "torment" .. settings.tier, startAct = 1 }
     end
     local diff = mode.difficulties[settings.diff[settings.mode] or 1]
-    return { action = "solo", difficulty = diff.id, startAct = mode.acts and settings.act or 1 }
+    -- a modifier can only be set inside a hosted lobby: host one, then L.lobbyTick sets it and starts
+    return { action = lobbyModifier() and "host" or "solo", difficulty = diff.id, startAct = mode.acts and settings.act or 1 }
 end
 
 local function lobbyDescribe()
     local mode = MODES[settings.mode]
     if mode.id == "torment" then return "Torment " .. settings.tier end
     local diff = mode.difficulties[settings.diff[settings.mode] or 1]
-    return mode.name .. " · " .. diff.name .. (mode.acts and (" · Act " .. settings.act) or "")
+    local mod = lobbyModifier()
+    return mode.name .. " · " .. diff.name .. (mode.acts and (" · Act " .. settings.act) or "") .. (mod and (" · " .. mod.name) or "")
 end
 
 -- widgets the automation below needs. Each tab is built inside its own do-block
@@ -1258,6 +1275,27 @@ local _, refreshTier = stepper(tierRow, function() return settings.tier end, fun
     settings.tier = v; save(); refreshLobby()
 end, 1, 1, MODES[3].tiers, "%d")
 
+local modRow = row(stageCard, nil, nil, 92)
+label(modRow, "Modifier", 11, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 16) })
+local modBox = new("Frame", {
+    Parent = modRow, Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = T.bg, BorderSizePixel = 0,
+}, { corner(R_CTL), line() })
+local modName = label(modBox, "", 12, T.text, FONT_BOLD, { Size = UDim2.new(1, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Center })
+local modNote = label(modRow, "", 10, T.muted, FONT, { Position = UDim2.fromOffset(0, 66), Size = UDim2.new(1, 0, 0, 14) })
+for _, dir in ipairs({ -1, 1 }) do
+    local b = new("TextButton", {
+        Parent = modBox, AutoButtonColor = false, BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(dir < 0 and 0 or 1, 0), Position = UDim2.fromScale(dir < 0 and 0 or 1, 0), Size = UDim2.new(0, 34, 1, 0),
+        Text = dir < 0 and "‹" or "›", FontFace = FONT_BOLD, TextSize = 18, TextColor3 = T.muted,
+    })
+    b.MouseEnter:Connect(function() tween(b, { TextColor3 = T.text }, MOTION.hover) end)
+    b.MouseLeave:Connect(function() tween(b, { TextColor3 = T.muted }, MOTION.hover) end)
+    b.MouseButton1Click:Connect(function()
+        settings.modifier = (settings.modifier - 1 + dir) % #MODIFIERS + 1
+        save(); refreshLobby()
+    end)
+end
+
 local launchCard, refreshLaunchHead = card(lobbyR, 1, "↻", T.green, "Auto Start", "Start the stage whenever you are in the lobby", "auto", function() refreshLobby() end)
 local summaryText = valueRow(launchCard, "Selected", T.accentT)
 local statusRow = row(launchCard, nil, nil, 50)
@@ -1285,6 +1323,11 @@ function refreshLobby()
     diffRow.Visible = mode.difficulties ~= nil
     actRow.Visible = mode.acts ~= nil
     tierRow.Visible = mode.id == "torment"
+    modRow.Visible = mode.id ~= "torment"
+    local mod = MODIFIERS[settings.modifier] or MODIFIERS[1]
+    modName.Text = string.upper(mod.name)
+    modName.TextColor3 = mod.id == "none" and T.text or T.accentT
+    modNote.Text = mod.text
     for i, b in ipairs(actButtons) do
         local sel = (i == settings.act)
         b.BackgroundColor3 = sel and T.accent or T.raised
@@ -1315,6 +1358,7 @@ local attackCard = card(combatL, 2, "⚔", T.amber, "Attack", "Your turn")
 switchRow(attackCard, "Auto Attack", "Basic attack on your turn", "autoAttack")
 switchRow(attackCard, "Perfect Attack", "Wins your class minigame every time", "perfectAttack")
 switchRow(attackCard, "Hide Minigame UI", "Don't show the timing screens", "hideMinigame")
+switchRow(attackCard, "Hide Scroll Effect", "Skip the Scroll animation and its console errors", "hideScrollFx", function() ui.applyScrollFx() end)
 do
     local r = row(attackCard, "Target", nil, 44)
     local bar = segmented(r, { "Lowest HP", "First" }, function() return settings.target end, function(i) settings.target = i; save() end)
@@ -2003,6 +2047,9 @@ do
     end)
 end
 
+local afkCard = card(setL, 2, "☾", T.green, "Anti AFK", "Stay in the server while farming", "antiAfk")
+footerNote(afkCard, "Roblox kicks you after 20 minutes without input. This sends a harmless click when Roblox says you went idle.")
+
 local fileCard = card(setR, 1, "⌂", T.sky, "Files", "In your executor's workspace folder")
 valueRow(fileCard, "Version").Text = VERSION
 valueRow(fileCard, "Script").Text = ONLINE and "Online (latest)" or SCRIPT_FILE
@@ -2164,10 +2211,45 @@ local function canStart()
     return true
 end
 
+-- Lobby we hosted to pick a modifier (RPGState "RunLobby"). Only lobbies opened by fireStart are driven,
+-- so a lobby the player hosts by hand is left alone.
+local lobbyState, hostedAt = nil, -math.huge
+
 local function fireStart()
     lastLobbyFire = os.clock()
-    RPGCommand:FireServer("RunLobby", lobbyPayload())
+    local payload = lobbyPayload()
+    if payload.action == "host" then hostedAt = os.clock() end
+    RPGCommand:FireServer("RunLobby", payload)
     ui.lobbyStatus.Text = "Sent: " .. lobbyDescribe()
+end
+
+local function ourLobby()
+    local s = lobbyState
+    return s and s.state == "lobby" and not s.fromQueue and s.hostUserId == LocalPlayer.UserId
+        and os.clock() - hostedAt < 90
+end
+
+-- friends only (no strangers join) -> set the modifier -> start. Each step waits for the server's new state.
+function L.lobbyTick()
+    if not ourLobby() then return end
+    local s, mod = lobbyState, lobbyModifier()
+    local rev = tostring(s.revision)
+    if s.friendsOnly ~= true then
+        if once("lobbyFriends:" .. rev, 3) then RPGCommand:FireServer("RunLobby", { action = "friendsOnly", value = true }) end
+    elseif mod and s.modifier ~= mod.id then
+        if once("lobbyMod:" .. rev, 3) then
+            RPGCommand:FireServer("RunLobby", { action = "modifier", modifier = mod.id })
+            ui.lobbyStatus.Text = "Modifier: " .. mod.name
+        end
+    elseif once("lobbyStart:" .. rev, 3) then
+        RPGCommand:FireServer("RunLobby", { action = "start", revision = s.revision })
+        ui.lobbyStatus.Text = "Starting: " .. lobbyDescribe()
+    end
+end
+
+function L.onLobbyState(data)
+    lobbyState = data
+    L.lobbyTick()
 end
 
 ui.startNow.MouseButton1Click:Connect(function()
@@ -2196,6 +2278,7 @@ function L.resumeTick()
 end
 
 function L.autoStart()
+    if ourLobby() then return end -- L.lobbyTick is starting it
     if os.clock() - lastLobbyFire < LOBBY_COOLDOWN then return end
     if resumeWindowOpen() then ui.lobbyStatus.Text = "Auto Start: unfinished battle waiting" return end
     local ok, why = canStart()
@@ -2551,6 +2634,21 @@ local function hideMinigames()
     end
 end
 
+-- The game's PixelScrollFX errors on every cast (it fades a UIScale) and may leave effect frames behind.
+-- Swap its Play for a no-op while hidden; damage is server side, so only the animation goes.
+local scrollFx, scrollPlay
+function C.applyScrollFx()
+    if not scrollFx then
+        local scripts = LocalPlayer:FindFirstChild("PlayerScripts")
+        local mod = scripts and scripts:FindFirstChild("PixelScrollFX", true)
+        local ok, fx = pcall(function() return mod and mod:IsA("ModuleScript") and require(mod) end)
+        if not (ok and type(fx) == "table" and type(fx.Play) == "function") then return end
+        scrollFx, scrollPlay = fx, fx.Play
+    end
+    scrollFx.Play = (settings.hideScrollFx and alive()) and function() end or scrollPlay
+end
+
+ui.applyScrollFx = C.applyScrollFx -- the Auto Farm switch is built before this block
 C.snapshotOf, C.fightKind, C.tryAct = snapshotOf, fightKind, tryAct
 C.onMinigame, C.onDefense, C.hideMinigames = onMinigame, onDefense, hideMinigames
 end -- COMBAT LOGIC
@@ -3956,6 +4054,7 @@ RPGState.OnClientEvent:Connect(function(name, data)
             battle, battleAt = state, os.clock()
             learnFromBattle(state)
             if first then
+                C.applyScrollFx() -- the effect module may load after the script
                 setCombatStatus(settings.combat and "In battle" or "Off")
                 local k = C.fightKind(state)
                 ui.fightKind.Text = k == "boss" and "Boss" or (k == "miniboss" and "Mini-boss / Elite" or "Normal mobs")
@@ -3973,6 +4072,8 @@ RPGState.OnClientEvent:Connect(function(name, data)
         if not run or run.id ~= data.id or run.round ~= data.round or run.phase ~= data.phase then runAt = os.clock() end
         run = data
         Hook.onRunState(data)
+    elseif name == "RunLobby" and type(data) == "table" then
+        L.onLobbyState(data)
     elseif name == "RunGearDrop" and type(data) == "table" then
         Hook.onGearDrop(data)
     elseif name == "BossChestLoot" and type(data) == "table" then
@@ -4046,6 +4147,7 @@ task.spawn(function()
     while alive() and gui.Parent do
         pcall(L.trySelectSlot)
         pcall(L.resumeTick)
+        pcall(L.lobbyTick)
         if settings.auto then pcall(L.autoStart) end
         -- in a run but no RunState yet (script loaded after it was sent): ask for it
         if settings.autoRun and inAdventure() and os.clock() - lastRunSync > 3 and (run == nil or os.clock() - runAt > 20) then
@@ -4163,9 +4265,21 @@ do -- drag the bubble; a click without dragging opens the window
     bubble.MouseLeave:Connect(function() tween(bubble, { Size = UDim2.fromOffset(58, 58) }) end)
 end
 
+---------------- anti AFK: Roblox fires Idled before its 20-minute kick
+do
+    local VirtualUser = game:GetService("VirtualUser")
+    LocalPlayer.Idled:Connect(function()
+        if not (alive() and settings.antiAfk) then return end
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+end
+pcall(C.applyScrollFx)
+
 ---------------- unload
 local function unload()
     if genv.__PixelHelperToken == RUN_TOKEN then genv.__PixelHelperToken = nil end
+    pcall(C.applyScrollFx)
     gui:Destroy()
 end
 ui.unloadBtn.MouseButton1Click:Connect(unload)
