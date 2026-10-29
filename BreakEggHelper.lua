@@ -39,7 +39,7 @@ local LocalPlayer = Players.LocalPlayer
 local Shared      = ReplicatedStorage:WaitForChild("Shared")
 
 local SAVE_FILE = "BreakEggHelper_Settings_" .. LocalPlayer.UserId .. ".json"
-local VERSION   = "2.1.0"
+local VERSION   = "2.1.1"
 
 -- stop the previous copy of this script (its loops check this token)
 local genv = (getgenv and getgenv()) or _G
@@ -2480,7 +2480,8 @@ local function bagAnimals()
     local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
     local out = {}
     for _, t in ipairs(bp and bp:GetChildren() or {}) do
-        if t:IsA("Tool") and CollectionService:HasTag(t, TOOL_TAG) and type(t:GetAttribute("AnimalName")) == "string" then
+        if t:IsA("Tool") and type(t:GetAttribute("AnimalName")) == "string" and t.Name ~= "Pickaxe"
+            and (CollectionService:HasTag(t, TOOL_TAG) or t:GetAttribute("WeightKg") ~= nil) then
             table.insert(out, t)
         end
     end
@@ -2536,24 +2537,75 @@ local function parseAmount(text)
     return (tonumber(num) or 0) * mult
 end
 
--- sell Backpack animals under the threshold. returns how many, or nil + reason
-local function sellWeak()
+-- Sell Backpack animals under the threshold. returns how many were sold, or nil + reason.
+-- The server can turn a batch down, so it goes in passes: everything at once, then groups of 20, then one by
+-- one for whatever is still there; it stops when nothing under the limit is left or a pass sells nothing.
+-- verbose = print every animal with its $/s and what happened to it (the Sell button does that).
+local function sellWeak(verbose)
     local limit = tonumber(settings.sellBelow) or 0
     if limit <= 0 then return nil, L("Set a $/s first") end
-    local bag = bagAnimals()
-    local vals = cpsOf(bag)
-    local list = {}
-    for i, t in ipairs(bag) do
-        local v = vals[i] or 0
-        if v > 0 and v < limit then table.insert(list, t) end -- 0 = value unknown: never sold
-        if #list >= 200 then break end
-    end
-    if #list == 0 then return 0 end
     local remote = ReplicatedStorage:FindFirstChild("BackpackSellRemote")
     if not (remote and remote:IsA("RemoteFunction")) then warn("[LAIKAHUB] BackpackSellRemote missing") return nil, "remote missing" end
-    local ok, err = pcall(remote.InvokeServer, remote, list)
-    if not ok then warn("[LAIKAHUB] sell failed: " .. tostring(err)) return nil, tostring(err) end
-    return #list
+
+    -- an animal in your hand that is under the limit goes back to the bag first (the game does the same)
+    do
+        local c, hum = charParts()
+        local held = c and c:FindFirstChildOfClass("Tool")
+        if hum and held and CollectionService:HasTag(held, TOOL_TAG) then
+            local v = cpsOf({ held })[1] or 0
+            if v > 0 and v < limit then hum:UnequipTools() task.wait(0.2) end
+        end
+    end
+
+    local function under()
+        local bag = bagAnimals()
+        local vals = cpsOf(bag)
+        local list, kept = {}, {}
+        for i, t in ipairs(bag) do
+            local v = vals[i] or 0
+            if v > 0 and v < limit then table.insert(list, t) else table.insert(kept, { t, v }) end -- 0 = unknown: kept
+        end
+        return list, kept, vals, bag
+    end
+    local function sendBatch(batch)
+        local ok, res = pcall(remote.InvokeServer, remote, batch)
+        if not ok then warn("[LAIKAHUB] sell failed: " .. tostring(res)) end
+        task.wait(0.4)
+        local gone = 0
+        for _, t in ipairs(batch) do if not t:IsDescendantOf(LocalPlayer) then gone += 1 end end
+        if verbose then print(string.format("[LAIKAHUB] sell: sent %d, sold %d, server said %s", #batch, gone, tostring(res))) end
+        return gone
+    end
+
+    local sold, size = 0, 200
+    for _ = 1, 12 do
+        local list = under()
+        if #list == 0 then break end
+        local passSold = 0
+        for i = 1, #list, size do
+            local batch = {}
+            for j = i, math.min(i + size - 1, #list) do table.insert(batch, list[j]) end
+            passSold += sendBatch(batch)
+        end
+        sold += passSold
+        if passSold == 0 then
+            if size == 1 then break end
+            size = size > 20 and 20 or 1 -- the batch was turned down: smaller ones
+        end
+    end
+
+    if verbose then
+        local left, kept, vals, bag = under()
+        print(string.format("[LAIKAHUB] sell below %s: sold %d, %d under the limit still in the bag", shortCash(limit), sold, #left))
+        for i, t in ipairs(bag) do
+            local v = vals[i] or 0
+            print(string.format("   %-24s %-10s %s", tostring(t:GetAttribute("AnimalName")), shortCash(v),
+                v == 0 and "kept: $/s unknown" or (v < limit and "STILL HERE (server kept it)" or "kept: above the limit")))
+        end
+        if #left > 0 then warn("[LAIKAHUB] the server did not sell " .. #left .. " animal(s) under the limit") end
+        local _ = kept
+    end
+    return sold
 end
 
 -- index rewards
@@ -2621,8 +2673,8 @@ do
     rightAnchor(b, 84, 28)
     b.MouseButton1Click:Connect(function()
         task.spawn(function()
-            local n, why = sellWeak()
-            toast(n and (n > 0 and L("Sold %d animal(s)", n) or L("Nothing to sell")) or tostring(why), T.amber)
+            local n, why = sellWeak(true)
+            toast(n and (n > 0 and L("Sold %d animal(s)", n) or L("Nothing to sell")) or tostring(why), T.amber, IMG.sell)
         end)
     end)
 end
