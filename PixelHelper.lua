@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/c2GJGSnAwr" -- bug reports and help
-local VERSION     = "1.7.0" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.8.0" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -140,7 +140,7 @@ local RARITIES = {
 local settings = {
     tab = 1, antiAfk = true,
     -- lobby
-    mode = 1, diff = { 1, 1 }, act = 1, tier = 1, modifier = 1, auto = false,
+    mode = 1, diff = { 1, 1 }, act = 1, tier = 1, modifier = 1, auto = false, stopOnDeath = true,
     autoSlot = false, slot = 1, -- pick this character on the select screen
     autoRejoin = true, rejoinAfter = 40, lobbyPlaceId = 0, -- stuck on the boot screen -> rejoin
     -- combat
@@ -177,10 +177,15 @@ local settings = {
     autoBlight = false, blightDungeons = {}, blightDiffs = { normal = true, hard = true },
     slimeOrder = 1, slimeMaxTier = 0, blightKeep = 0, -- 1 highest slime first, 2 lowest; 0 = no limit
     autoUseKey = false, useKeyKind = 1, useKeyMaxTier = 0, keysPerRun = 3, -- 1 Torment keys only, 2 any key
+    -- hero: race / trait rolls on the Create / Edit Hero screen, Lineage ranks
+    autoRollRace = false, rollRaces = {}, autoRollTrait = false, rollTraits = {}, -- [id] = true: stop on any of these
+    autoRank = false, rankKeepGold = 0, rankKeepValor = 0,
     -- discord webhook: post each finished run
     webhookOn = false, webhookUrl = "", hookVictoryOnly = false, hookItems = true, hookHideName = false,
     -- window
     winW = 820, winH = 520,
+    -- performance
+    lowGraphics = false, no3d = false,
 }
 
 pcall(function()
@@ -559,6 +564,8 @@ local ICON_KEYS = {
     ["Pick Gear"] = "sword", ["Window"] = "book", ["Files"] = "blueprint", ["Unload"] = "skull",
     ["Keys"] = "key", ["Auto Blight"] = "volatile", ["Auto Use Key"] = "key", ["Your Keys"] = "pouch",
     ["Pets"] = "paw", ["Auto Hatch"] = "star", ["Haunted Egg"] = "candy", ["Auto Release"] = "paw", ["Your Pets"] = "heart",
+    ["Hero"] = "lineage", ["Auto Roll Race"] = "star", ["Auto Roll Trait"] = "star", ["Auto Rank Up"] = "valor",
+    ["Performance"] = "hourglass",
 }
 
 -- draws art `key` centred in `parent`, as large as fits in `size` px. returns the holder or nil
@@ -981,16 +988,18 @@ local function addTab(section, glyph, name, subtitle)
     b.MouseButton1Click:Connect(function() selectTab(index) end)
     return left, right
 end
-local homeL, homeR     = addTab("General", "⌂", "Home", "Your character and what the script is doing")
-local lobbyL, lobbyR   = addTab(nil, "▶", "Lobby", "Pick a stage and launch it automatically")
-local combatL, combatR = addTab("Automation", "◆", "Auto Farm", "Battle: attack, dodge, skills, potions")
-local runL, runR       = addTab(nil, "↗", "Run", "Map paths, events and what happens when a run ends")
-local keyL, keyR       = addTab(nil, "⚿", "Keys", "Blight dungeon keys in the lobby, use them in Story runs")
-local sellL, sellR     = addTab("Items", "$", "Auto Sell", "Sell gear you don't want, keep what you name")
-local forgeL, forgeR   = addTab(nil, "⚒", "Auto Forge", "Tick gear pictures and hone them to a target +")
-local petL, petR       = addTab(nil, "♣", "Pets", "Hatch eggs, release pets, buy Haunted Eggs")
-local hookL, hookR     = addTab("App", "✉", "Webhook", "Post what you got from each run to Discord")
-local setL, setR       = addTab(nil, "≡", "Settings", "Window, files and unloading")
+local col = {} -- left and right column of every tab
+col.homeL, col.homeR     = addTab("General", "⌂", "Home", "Your character and what the script is doing")
+col.lobbyL, col.lobbyR   = addTab(nil, "▶", "Lobby", "Pick a stage and launch it automatically")
+col.combatL, col.combatR = addTab("Automation", "◆", "Auto Farm", "Battle: attack, dodge, skills, potions")
+col.runL, col.runR       = addTab(nil, "↗", "Run", "Map paths, events and what happens when a run ends")
+col.keyL, col.keyR       = addTab(nil, "⚿", "Keys", "Blight dungeon keys in the lobby, use them in Story runs")
+col.heroL, col.heroR     = addTab(nil, "✧", "Hero", "Roll race and trait, buy Lineage ranks")
+col.sellL, col.sellR     = addTab("Items", "$", "Auto Sell", "Sell gear you don't want, keep what you name")
+col.forgeL, col.forgeR   = addTab(nil, "⚒", "Auto Forge", "Tick gear pictures and hone them to a target +")
+col.petL, col.petR       = addTab(nil, "♣", "Pets", "Hatch eggs, release pets, buy Haunted Eggs")
+col.hookL, col.hookR     = addTab("App", "✉", "Webhook", "Post what you got from each run to Discord")
+col.setL, col.setR       = addTab(nil, "≡", "Settings", "Window, files and unloading")
 
 ---------------------------------------------------------------- LOBBY TAB
 -- the picked modifier, or nil when the run uses none (or the mode has no modifiers)
@@ -1061,7 +1070,7 @@ end
 
 ---------------- profile
 local profileCard = new("Frame", {
-    Parent = homeL, LayoutOrder = 1, BackgroundColor3 = T.card, BorderSizePixel = 0,
+    Parent = col.homeL, LayoutOrder = 1, BackgroundColor3 = T.card, BorderSizePixel = 0,
     Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 }, { corner(R_CARD), line(), vlist(0) })
 profileCard:SetAttribute("rows", 0)
@@ -1106,7 +1115,7 @@ local earnedText  = valueRow(profileCard, "Gold this session", T.green)
 local uptimeText  = valueRow(profileCard, "Running for")
 
 ---------------- activity
-local activityCard = card(homeR, 1, "◎", T.green, "Activity", "What the script is doing right now")
+local activityCard = card(col.homeR, 1, "◎", T.green, "Activity", "What the script is doing right now")
 local nowRow = row(activityCard, nil, nil, 56)
 local dot = new("Frame", {
     Parent = nowRow, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 6, 0.5, 0), Size = UDim2.fromOffset(10, 10),
@@ -1147,7 +1156,7 @@ local mirrors = {
 
 ---------------- community
 local DISCORD = Color3.fromHex("5865f2")
-local communityCard = card(homeR, 2, "✉", T.violet, "Community", "Report a bug or ask how something works")
+local communityCard = card(col.homeR, 2, "✉", T.violet, "Community", "Report a bug or ask how something works")
 local inviteRow = row(communityCard, nil, nil, 60)
 local discordBtn = new("TextButton", {
     Parent = inviteRow, AutoButtonColor = false, BackgroundColor3 = DISCORD, BorderSizePixel = 0,
@@ -1225,7 +1234,7 @@ end -- HOME TAB
 do -- LOBBY TAB widgets
 local refreshLobby -- forward
 
-local stageCard = card(lobbyL, 1, "▶", T.accent, "Stage", "Mode, difficulty and where to start")
+local stageCard = card(col.lobbyL, 1, "▶", T.accent, "Stage", "Mode, difficulty and where to start")
 local refreshMode
 do
     local r = row(stageCard, nil, nil, 48)
@@ -1296,14 +1305,15 @@ for _, dir in ipairs({ -1, 1 }) do
     end)
 end
 
-local launchCard, refreshLaunchHead = card(lobbyR, 1, "↻", T.green, "Auto Start", "Start the stage whenever you are in the lobby", "auto", function() refreshLobby() end)
+local launchCard, refreshLaunchHead = card(col.lobbyR, 1, "↻", T.green, "Auto Start", "Start the stage whenever you are in the lobby", "auto", function() refreshLobby() end)
 local summaryText = valueRow(launchCard, "Selected", T.accentT)
 local statusRow = row(launchCard, nil, nil, 50)
 local lobbyStatus = label(statusRow, "", 11, T.muted, FONT, { Size = UDim2.new(1, -112, 1, 0), TextWrapped = true })
 local startNow = primaryButton(statusRow, "Start Now", 100)
+switchRow(launchCard, "Stop on death", "Turn Auto Start off when your hero dies", "stopOnDeath")
 footerNote(launchCard, "After a run, the Run tab decides Replay, Next or Castle.")
 
-local slotCard = card(lobbyR, 2, "☺", T.violet, "Auto Select Character", "Pick a character slot when the game opens", "autoSlot")
+local slotCard = card(col.lobbyR, 2, "☺", T.violet, "Auto Select Character", "Pick a character slot when the game opens", "autoSlot")
 local slotRow = row(slotCard, "Character slot", "Slot 1 is the left card")
 stepper(slotRow, function() return settings.slot end, function(v) settings.slot = v; save() end, 1, 1, 10, "Slot %d")
 local slotStatus = valueRow(slotCard, "Status")
@@ -1340,13 +1350,13 @@ function refreshLobby()
     lobbyStatus.Text = settings.auto and "Auto Start is on" or "Auto Start is off"
 end
 refreshLobby()
-ui.lobbyStatus, ui.startNow = lobbyStatus, startNow
+ui.lobbyStatus, ui.startNow, ui.refreshLobby = lobbyStatus, startNow, refreshLobby
 end -- LOBBY TAB
 
 ---------------------------------------------------------------- AUTO FARM TAB
 do
 local combatStatusText
-local masterCard = card(combatL, 1, "◆", T.accent, "Auto Combat", "Master switch for this tab", "combat", function()
+local masterCard = card(col.combatL, 1, "◆", T.accent, "Auto Combat", "Master switch for this tab", "combat", function()
     if combatStatusText then combatStatusText.Text = settings.combat and "Waiting for a battle" or "Off" end
 end)
 combatStatusText = valueRow(masterCard, "Status")
@@ -1354,7 +1364,7 @@ combatStatusText.Text = settings.combat and "Waiting for a battle" or "Off"
 local classText = valueRow(masterCard, "Your class", T.accentT)
 local fightKindText = valueRow(masterCard, "This battle")
 
-local attackCard = card(combatL, 2, "⚔", T.amber, "Attack", "Your turn")
+local attackCard = card(col.combatL, 2, "⚔", T.amber, "Attack", "Your turn")
 switchRow(attackCard, "Auto Attack", "Basic attack on your turn", "autoAttack")
 switchRow(attackCard, "Perfect Attack", "Wins your class minigame every time", "perfectAttack")
 switchRow(attackCard, "Hide Minigame UI", "Don't show the timing screens", "hideMinigame")
@@ -1366,14 +1376,14 @@ do
 end
 sliderRow(attackCard, "Action Delay", "Wait before acting", "delay", 0, 3, 0.1, "%.1fs")
 
-local defenseCard = card(combatR, 1, "▲", T.sky, "Defense", "Enemy turn")
+local defenseCard = card(col.combatR, 1, "▲", T.sky, "Defense", "Enemy turn")
 switchRow(defenseCard, "Perfect Dodge", "Press exactly as the rings meet", "perfectDodge")
 switchRow(defenseCard, "Guard Boss Specials", "GUARD when a boss winds up a special", "autoGuard")
 
-local potionCard = card(combatR, 2, "+", T.pink, "Potion", "Heal before it's too late", "autoPotion")
+local potionCard = card(col.combatR, 2, "+", T.pink, "Potion", "Heal before it's too late", "autoPotion")
 sliderRow(potionCard, "Drink below HP", "Uses your turn to drink a Potion", "potionHp", 5, 90, 5, "%d%%")
 
-local skillCard = card(combatR, 3, "★", T.violet, "Auto Skills", "Top of the list is tried first", "autoSkill")
+local skillCard = card(col.combatR, 3, "★", T.violet, "Auto Skills", "Top of the list is tried first", "autoSkill")
 do
     local modeNotes = {
         "Always the highest skill that is ready",
@@ -1437,14 +1447,14 @@ end
 ---------------------------------------------------------------- RUN TAB
 do
 local runStatusText
-local runMaster = card(runL, 1, "↗", T.accent, "Auto Run", "Master switch for this tab", "autoRun", function()
+local runMaster = card(col.runL, 1, "↗", T.accent, "Auto Run", "Master switch for this tab", "autoRun", function()
     if runStatusText then runStatusText.Text = settings.autoRun and "Waiting for a run" or "Off" end
 end)
 runStatusText = valueRow(runMaster, "Status")
 runStatusText.Text = settings.autoRun and "Waiting for a run" or "Off"
 sliderRow(runMaster, "Click Delay", "Wait before each choice", "runDelay", 0.3, 3, 0.1, "%.1fs")
 
-local pathCard = card(runL, 2, "⇢", T.sky, "Auto Choose Path", "Takes the highest card that is offered", "autoPath")
+local pathCard = card(col.runL, 2, "⇢", T.sky, "Auto Choose Path", "Takes the highest card that is offered", "autoPath")
 local pathListFrame = new("Frame", {
     Parent = pathCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 }, { vlist(0) })
@@ -1452,7 +1462,7 @@ orderedList(pathListFrame, settings.pathPriority, function(p) return PATH_NAME[p
 local pathFoot = footerNote(pathCard, "Boss is always taken. Turn Back is only used to leave a run.")
 pathFoot.LayoutOrder = 60
 
-local eventCard = card(runL, 3, "◎", T.amber, "Events", "What to pick at each stop")
+local eventCard = card(col.runL, 3, "◎", T.amber, "Events", "What to pick at each stop")
 do
     local r = row(eventCard, "Camp", nil, 44)
     local bar = segmented(r, { "Rest", "Sharpen" }, function() return settings.campChoice end, function(i) settings.campChoice = i; save() end)
@@ -1471,13 +1481,13 @@ for _, item in ipairs(SHOP_ITEMS) do
     end)
 end
 
-local flowCard = card(runR, 1, "▸", T.green, "Flow", "Keep the run moving")
+local flowCard = card(col.runR, 1, "▸", T.green, "Flow", "Keep the run moving")
 switchRow(flowCard, "Auto Continue", "Close victory screens and cutscenes", "autoContinue")
 switchRow(flowCard, "Collect Boss Chest", "Close the loot chest after a boss", "autoChest")
 switchRow(flowCard, "Continue After Death", "Press Continue in the Light", "autoDeath")
 switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head back in (never Abandon)", "autoResume")
 
-local endCard = card(runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
+local endCard = card(col.runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
 switchRow(endCard, "Auto Next Act", "Off: stop after the first act (unless Leave after Act is set)", "storyNextAct")
 sliderRow(endCard, "Leave after Act", "Goes home from the map once this act's boss is down", "storyExitAct", 0, 10, 1, "Act %d", "End")
@@ -1500,7 +1510,7 @@ local refreshSellPreview = function() end
 local renderBagNames = function() end
 
 do
-local sellMaster = card(sellL, 1, "$", T.green, "Auto Sell", "Sells matching gear whenever your bag changes", "autoSell", function() refreshSellPreview() end)
+local sellMaster = card(col.sellL, 1, "$", T.green, "Auto Sell", "Sells matching gear whenever your bag changes", "autoSell", function() refreshSellPreview() end)
 local sellPreviewText = valueRow(sellMaster, "Matching now", T.accentT)
 local sellStatusText = valueRow(sellMaster, "Last sale")
 sellStatusText.Text = "—"
@@ -1510,7 +1520,7 @@ label(sellNowRow, "Locked, equipped, vanity and starter gear is never sold.", 10
 })
 local sellNowBtn = primaryButton(sellNowRow, "Sell Now", 100)
 
-local kindCard = card(sellL, 2, "▣", T.sky, "Gear Types", "Tick what may be sold")
+local kindCard = card(col.sellL, 2, "▣", T.sky, "Gear Types", "Tick what may be sold")
 for _, k in ipairs(GEAR_KINDS) do
     local r = row(kindCard, k, nil)
     checkbox(r, function() return settings.sellKinds[k] end, function()
@@ -1518,7 +1528,7 @@ for _, k in ipairs(GEAR_KINDS) do
     end)
 end
 
-local rarityCard = card(sellL, 3, "◇", T.violet, "Rarity", "Tick which rarities may be sold")
+local rarityCard = card(col.sellL, 3, "◇", T.violet, "Rarity", "Tick which rarities may be sold")
 for _, rr in ipairs(RARITIES) do
     local r = row(rarityCard, nil, nil, 38)
     label(r, rr.id, 13, rr.color, FONT_SEMI, { Size = UDim2.new(1, -100, 1, 0) })
@@ -1528,7 +1538,7 @@ for _, rr in ipairs(RARITIES) do
 end
 
 -- keep list: never sell anything whose name contains one of these words
-local keepCard = card(sellR, 1, "♥", T.pink, "Never Sell", "Names you keep, even if ticked above")
+local keepCard = card(col.sellR, 1, "♥", T.pink, "Never Sell", "Names you keep, even if ticked above")
 local pickRow = row(keepCard, nil, nil, 54)
 local pickBtn = new("TextButton", {
     Parent = pickRow, AutoButtonColor = false, BackgroundColor3 = T.accent, BorderSizePixel = 0,
@@ -1821,7 +1831,7 @@ do
 end
 
 -- names currently in the bag, tick to keep
-local bagCard = card(sellR, 2, "☰", T.amber, "In Your Bag", "Tick a name to keep it")
+local bagCard = card(col.sellR, 2, "☰", T.amber, "In Your Bag", "Tick a name to keep it")
 local bagListFrame = new("Frame", {
     Parent = bagCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 }, { vlist(0) })
@@ -1835,7 +1845,7 @@ end -- AUTO SELL TAB
 local renderForge = function() end -- set by the forge logic
 
 do
-local forgeMaster = card(forgeL, 1, "⚒", T.amber, "Auto Forge", "Hones every ticked piece up to the target", "autoForge")
+local forgeMaster = card(col.forgeL, 1, "⚒", T.amber, "Auto Forge", "Hones every ticked piece up to the target", "autoForge")
 sliderRow(forgeMaster, "Stop at", "Hone each ticked piece up to this +", "forgeTarget", 1, 10, 1, "+%d")
 sliderRow(forgeMaster, "Keep gold above", "Never spend gold below this", "forgeReserve", 0, 100000, 500, "%d")
 local goldText = valueRow(forgeMaster, "Gold", T.amber)
@@ -1849,7 +1859,7 @@ label(onceRow, "From +5 a failed hone can drop the piece by 1.", 10, T.muted, FO
 local onceBtn = primaryButton(onceRow, "Hone Once", 104)
 footerNote(forgeMaster, "Works in the lobby once the Blacksmith is repaired. Each hone costs 1 whetstone of the piece's rarity plus gold.")
 
-local pickCard = card(forgeR, 1, "▦", T.violet, "Pick Gear", "Tap a picture to tick it")
+local pickCard = card(col.forgeR, 1, "▦", T.violet, "Pick Gear", "Tap a picture to tick it")
 do
     local r = row(pickCard, nil, nil, 48)
     local bar, refresh
@@ -1886,7 +1896,7 @@ if next(settings.blightDungeons) == nil then
     for _, d in ipairs(dungeons) do settings.blightDungeons[d.id] = true end
 end
 
-local blightCard = card(keyL, 1, "✦", T.violet, "Auto Blight", "Key + Blighted Slime = Torment key. Lobby and runs", "autoBlight")
+local blightCard = card(col.keyL, 1, "✦", T.violet, "Auto Blight", "Key + Blighted Slime = Torment key. Lobby and runs", "autoBlight")
 local blightStatus = valueRow(blightCard, "Status")
 blightStatus.Text = "—"
 local nextRow = row(blightCard, nil, nil, 46)
@@ -1920,7 +1930,7 @@ sliderRow(blightCard, "Max slime level", "Only use slimes up to this level", "sl
 sliderRow(blightCard, "Keep keys", "Leave at least this many of each key", "blightKeep", 0, 20, 1, "%d", "None", function() renderKeys() end)
 footerNote(blightCard, "The result only depends on the slime level, so the cheapest keys (L1 Normal) are used first.")
 
-local useCard = card(keyR, 1, "⚿", T.amber, "Auto Use Key", "In a Story run: use a key at the path pick and confirm", "autoUseKey")
+local useCard = card(col.keyR, 1, "⚿", T.amber, "Auto Use Key", "In a Story run: use a key at the path pick and confirm", "autoUseKey")
 local useStatus = valueRow(useCard, "Status")
 useStatus.Text = "—"
 do
@@ -1935,7 +1945,7 @@ sliderRow(useCard, "Up to Torment", "Skip Torment keys above this tier", "useKey
 sliderRow(useCard, "Keys per run", "How many keys to use in one Story run", "keysPerRun", 1, 10, 1, "%d")
 footerNote(useCard, "Highest Torment key first. Story runs only (the game doesn't allow keys in Torment or Halloween). The party confirms the entry automatically.")
 
-local listCard = card(keyR, 2, "☰", T.sky, "Your Keys", "Keys and Blighted Slime in your bag")
+local listCard = card(col.keyR, 2, "☰", T.sky, "Your Keys", "Keys and Blighted Slime in your bag")
 local keyList = new("Frame", {
     Parent = listCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 }, { vlist(0) })
@@ -1943,11 +1953,61 @@ local keyList = new("Frame", {
 ui.keys = { KD = KD, blightStatus = blightStatus, nextText = nextText, useStatus = useStatus, list = keyList }
 end -- KEYS TAB
 
+---------------------------------------------------------------- HERO TAB
+do
+local creation = GameConfig and type(GameConfig.CharacterCreation) == "table" and GameConfig.CharacterCreation or {}
+local RARITY_TINT = { Common = T.muted, Uncommon = T.green, Rare = T.sky, Mythic = T.amber }
+
+-- one card per roll: a checkbox for every race / trait the roll can land on (weight 0 = shop only, skipped)
+local function rollCard(column, title, sub, key, picks, list)
+    local c, refreshHead = card(column, 1, "✧", T.violet, title, sub, key)
+    local status = valueRow(c, "Status")
+    status.Text = "—"
+    sectionLabel(c, "Stop when it lands on")
+    local any = false
+    for _, d in ipairs(type(list) == "table" and list or {}) do
+        if type(d) == "table" and (tonumber(d.weight) or 0) > 0 then
+            any = true
+            local r = row(c, tostring(d.name or d.id), nil)
+            label(r, tostring(d.rarity or ""), 10, RARITY_TINT[d.rarity] or T.muted, FONT_SEMI, {
+                AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -30, 0, 0), Size = UDim2.new(0, 70, 1, 0),
+                TextXAlignment = Enum.TextXAlignment.Right,
+            })
+            checkbox(r, function() return settings[picks][d.id] == true end, function()
+                settings[picks][d.id] = (not settings[picks][d.id]) or nil; save()
+            end)
+        end
+    end
+    if not any then row(c, "List not loaded yet: open the lobby", nil) end
+    return c, status, refreshHead
+end
+
+local raceCard, raceStatus, refreshRace = rollCard(col.heroL, "Auto Roll Race", "Reroll until you get a ticked race", "autoRollRace", "rollRaces", creation.Races)
+footerNote(raceCard, "If the game warns that a reroll loses your bloodline, it stops and leaves that roll to you.")
+local traitCard, traitStatus, refreshTrait = rollCard(col.heroR, "Auto Roll Trait", "Reroll until you get a ticked trait", "autoRollTrait", "rollTraits", creation.Talents)
+footerNote(traitCard, "Open Create Hero or Edit Hero first. Each roll uses one spin. It stops when spins run out and never buys more.")
+
+local rankCard = card(col.heroR, 2, "▲", T.amber, "Auto Rank Up", "Buy Lineage ranks with Valor + gold when you can afford them", "autoRank")
+local rankNow = valueRow(rankCard, "Lineage rank", T.accentT)
+local rankNext = valueRow(rankCard, "Next rank costs")
+local rankStatus = valueRow(rankCard, "Status")
+rankNow.Text, rankNext.Text, rankStatus.Text = "—", "—", "—"
+sliderRow(rankCard, "Keep gold", "Never spend gold below this", "rankKeepGold", 0, 1000000, 10000, "%d", "None")
+sliderRow(rankCard, "Keep Valor", "Never spend Valor below this", "rankKeepValor", 0, 500, 5, "%d", "None")
+footerNote(rankCard, "Lobby only, between runs. Buys as many ranks as you can afford at once (up to 25), like the game's BUY button.")
+
+ui.hero = {
+    Race  = { status = raceStatus, refresh = refreshRace },
+    Trait = { status = traitStatus, refresh = refreshTrait },
+    rankNow = rankNow, rankNext = rankNext, rankStatus = rankStatus,
+}
+end -- HERO TAB
+
 ---------------------------------------------------------------- PETS TAB
 local renderPets = function() end -- set by the pets logic
 
 do
-local hatchCard = card(petL, 1, "◎", T.green, "Auto Hatch", "Hatches the ticked eggs while the ranch has room", "autoHatch")
+local hatchCard = card(col.petL, 1, "◎", T.green, "Auto Hatch", "Hatches the ticked eggs while the ranch has room", "autoHatch")
 local hatchStatus = valueRow(hatchCard, "Status")
 hatchStatus.Text = "—"
 local ranchText = valueRow(hatchCard, "Ranch")
@@ -1959,7 +2019,7 @@ local eggList = new("Frame", {
 local hatchFoot = footerNote(hatchCard, "Eggs rarer than your ranch allows are skipped. Release or upgrade the ranch when it is full.")
 hatchFoot.LayoutOrder = 60
 
-local candyCard = card(petL, 2, "♦", T.amber, "Haunted Egg", "Candy Witch: buy Haunted Eggs with candy", "autoCandyEgg")
+local candyCard = card(col.petL, 2, "♦", T.amber, "Haunted Egg", "Candy Witch: buy Haunted Eggs with candy", "autoCandyEgg")
 local candyText = valueRow(candyCard, "Candy", T.amber)
 candyText.Text = "—"
 local candyStatus = valueRow(candyCard, "Status")
@@ -1967,7 +2027,7 @@ candyStatus.Text = "—"
 sliderRow(candyCard, "Keep candy above", "Stops buying before candy drops below this", "candyKeep", 0, 20000, 100, "%d")
 footerNote(candyCard, "Each Haunted Egg costs 220 candy. Only while the Halloween stall is open; you can hold 99 eggs.")
 
-local releaseCard = card(petR, 1, "✕", T.pink, "Auto Release", "Lets go of pets of the ticked rarities", "autoRelease")
+local releaseCard = card(col.petR, 1, "✕", T.pink, "Auto Release", "Lets go of pets of the ticked rarities", "autoRelease")
 local releaseStatus = valueRow(releaseCard, "Status")
 releaseStatus.Text = "—"
 sectionLabel(releaseCard, "Release these rarities")
@@ -1981,7 +2041,7 @@ end
 sliderRow(releaseCard, "Keep from level", "Never release a pet at or above this level", "releaseKeepLevel", 0, 100, 1, "Lv %d", "Off")
 footerNote(releaseCard, "Locked pets, your active pet and bound pets (Mochi, Party Slime) are never released.")
 
-local petsCard = card(petR, 2, "♥", T.violet, "Your Pets", "What is in the ranch right now")
+local petsCard = card(col.petR, 2, "♥", T.violet, "Your Pets", "What is in the ranch right now")
 local petList = new("Frame", {
     Parent = petsCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 }, { vlist(0) })
@@ -1995,7 +2055,7 @@ end -- PETS TAB
 
 ---------------------------------------------------------------- WEBHOOK TAB
 do
-local hookCard = card(hookL, 1, "✉", Color3.fromHex("5865f2"), "Discord Webhook", "Posts a message when a run ends", "webhookOn")
+local hookCard = card(col.hookL, 1, "✉", Color3.fromHex("5865f2"), "Discord Webhook", "Posts a message when a run ends", "webhookOn")
 local urlRow = row(hookCard, nil, nil, 76)
 label(urlRow, "Webhook link", 11, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 16) })
 local urlBox = new("TextBox", {
@@ -2021,7 +2081,7 @@ local function saveUrl()
 end
 urlBox.FocusLost:Connect(saveUrl)
 
-local sendCard = card(hookR, 1, "☰", T.amber, "What to Send", "Choose what the message shows")
+local sendCard = card(col.hookR, 1, "☰", T.amber, "What to Send", "Choose what the message shows")
 switchRow(sendCard, "Skip lost runs", "Only post runs you won or left on purpose", "hookVictoryOnly")
 switchRow(sendCard, "List items", "Every gear, egg and material dropped this run", "hookItems")
 switchRow(sendCard, "Hide my name", "Don't show your Roblox name in Discord", "hookHideName")
@@ -2032,7 +2092,7 @@ end -- WEBHOOK TAB
 
 ---------------------------------------------------------------- SETTINGS TAB
 do
-local winCard = card(setL, 1, "▢", T.accent, "Window", "Size and visibility")
+local winCard = card(col.setL, 1, "▢", T.accent, "Window", "Size and visibility")
 footerNote(winCard, "Red dot (top left) hides the window into the cat bubble. Click the bubble to bring it back. RightShift does the same.")
 footerNote(winCard, "Drag the right edge, bottom edge or corner to resize. The size is remembered.")
 do
@@ -2047,10 +2107,15 @@ do
     end)
 end
 
-local afkCard = card(setL, 2, "☾", T.green, "Anti AFK", "Stay in the server while farming", "antiAfk")
+local afkCard = card(col.setL, 2, "☾", T.green, "Anti AFK", "Stay in the server while farming", "antiAfk")
 footerNote(afkCard, "Roblox kicks you after 20 minutes without input. This sends a harmless click when Roblox says you went idle.")
 
-local fileCard = card(setR, 1, "⌂", T.sky, "Files", "In your executor's workspace folder")
+local perfCard = card(col.setL, 3, "⚡", T.amber, "Performance", "More FPS while farming")
+switchRow(perfCard, "Low Graphics", "Plain battle background, lowest quality, no shadows", "lowGraphics", function() ui.applyGraphics() end)
+switchRow(perfCard, "Turn Off 3D", "Stops drawing the 3D world (lobby, castle)", "no3d", function() ui.applyGraphics() end)
+footerNote(perfCard, "Battles are drawn as UI: Low Graphics hides the sky, trees and ground art behind the fighters. Turning it off brings them back; 3D parts look normal again after a rejoin.")
+
+local fileCard = card(col.setR, 1, "⌂", T.sky, "Files", "In your executor's workspace folder")
 valueRow(fileCard, "Version").Text = VERSION
 valueRow(fileCard, "Script").Text = ONLINE and "Online (latest)" or SCRIPT_FILE
 valueRow(fileCard, "Bubble picture").Text = ICON_FILE
@@ -2058,7 +2123,7 @@ valueRow(fileCard, "Settings").Text = SAVE_FILE
 footerNote(fileCard, ONLINE and "Loaded from the web, so it updates itself and restarts after every teleport."
     or "Keep the script file there so it starts again by itself after every teleport.")
 
-local unloadCard = card(setR, 2, "×", T.red, "Unload", "Stop everything and remove the window")
+local unloadCard = card(col.setR, 2, "×", T.red, "Unload", "Stop everything and remove the window")
 local unloadRow = row(unloadCard, "Unload script", "Turns off all automation")
 local unloadBtn = primaryButton(unloadRow, "Unload", 86)
 unloadBtn.BackgroundColor3 = T.red
@@ -2100,6 +2165,23 @@ local function press(btn)
         end
     end
     return ok
+end
+
+-- Walking all of PlayerGui is slow (the game builds thousands of objects) and dropped the FPS when it
+-- ran every tick, so keep an index instead: every TextButton, and the few named frames the loops look for.
+local gameUi = { buttons = {}, named = {} }
+do
+    local WATCH = { SlotCards = true, CharacterSelect = true, RunResumeWindow = true, RacePanel = true, TalentPanel = true }
+    local function add(d)
+        if d:IsA("TextButton") then gameUi.buttons[d] = true end
+        if WATCH[d.Name] then gameUi.named[d.Name] = d end
+    end
+    for _, d in ipairs(PlayerGui:GetDescendants()) do add(d) end
+    PlayerGui.DescendantAdded:Connect(add)
+    PlayerGui.DescendantRemoving:Connect(function(d)
+        gameUi.buttons[d] = nil
+        if gameUi.named[d.Name] == d then gameUi.named[d.Name] = nil end
+    end)
 end
 
 local function shownOnScreen(inst)
@@ -2169,11 +2251,9 @@ local function trySelectSlot()
         return
     end
     if not settings.autoSlot then return end
-    local cards, menuButton
-    for _, d in ipairs(PlayerGui:GetDescendants()) do
-        if d.Name == "SlotCards" and d:IsA("GuiObject") then cards = d end
-        if d.Name == "CharacterSelect" and d:IsA("TextButton") then menuButton = d end
-    end
+    local cards, menuButton = gameUi.named.SlotCards, gameUi.named.CharacterSelect
+    if cards and not cards:IsA("GuiObject") then cards = nil end
+    if menuButton and not menuButton:IsA("TextButton") then menuButton = nil end
     local cardsShown = cards and shownOnScreen(cards)
     local menuShown = menuButton and shownOnScreen(menuButton)
     watchStuck(cardsShown or menuShown)
@@ -2252,6 +2332,20 @@ function L.onLobbyState(data)
     L.lobbyTick()
 end
 
+-- A hero that dies in battle is sent to The Light (attribute RPGInTheLight, then RPGState "LightDialogue").
+-- Auto Start goes off then, so a dead hero doesn't start the next stage by itself.
+function L.onDeath()
+    if not (settings.stopOnDeath and settings.auto) then return end
+    settings.auto = false
+    save()
+    ui.refreshLobby()
+    ui.lobbyStatus.Text = "Your hero died: Auto Start is off"
+end
+LocalPlayer:GetAttributeChangedSignal("RPGInTheLight"):Connect(function()
+    if LocalPlayer:GetAttribute("RPGInTheLight") == true and alive() then L.onDeath() end
+end)
+if LocalPlayer:GetAttribute("RPGInTheLight") == true then L.onDeath() end
+
 ui.startNow.MouseButton1Click:Connect(function()
     local ok, why = canStart()
     if not ok then ui.lobbyStatus.Text = why return end
@@ -2263,7 +2357,7 @@ L.trySelectSlot = trySelectSlot
 -- "UNFINISHED BATTLE" window (server event RunResumeOffer): its green button sends RunLobby { action = "resume" }.
 -- The window resets its button after 8s if nothing happens, so retry every 10s while it is open.
 local function resumeWindowOpen()
-    local w = PlayerGui:FindFirstChild("RunResumeWindow", true)
+    local w = gameUi.named.RunResumeWindow
     return w ~= nil and shownOnScreen(w)
 end
 
@@ -2872,8 +2966,8 @@ local function clickThrough()
     if not settings.autoRun then return end
     if not inAdventure() and not battle then return end
     local endButtons = {}
-    for _, d in ipairs(PlayerGui:GetDescendants()) do
-        if d:IsA("TextButton") and d.Visible then
+    for d in pairs(gameUi.buttons) do
+        if d.Visible then
             local text = string.upper(d.Text)
             if text:find("RETURN TO CASTLE", 1, true) then endButtons.castle = d
             elseif text:find("PLAY AGAIN", 1, true) then endButtons.replay = d
@@ -3310,13 +3404,21 @@ local function findProfile(data, depth, seen)
     end
 end
 
+-- the lists are rebuilt at most once a second: after loot the game can send several Profiles in a row
+local renderQueued = false
 function setProfile(p)
     profile = p
-    refreshSellPreview()
-    renderBagNames()
-    renderForge()
-    renderPets()
-    renderKeys()
+    if renderQueued then return end
+    renderQueued = true
+    task.delay(1, function()
+        renderQueued = false
+        if not alive() then return end
+        refreshSellPreview()
+        renderBagNames()
+        renderForge()
+        renderPets()
+        renderKeys()
+    end)
 end
 
 local lastAsk = -math.huge
@@ -3340,6 +3442,118 @@ function requestProfile(force)
     end)
 end
 end -- PROFILE
+
+---------------------------------------------------------------- HERO LOGIC
+-- Rolls: the game's Create / Edit Hero screen has RacePanel / TalentPanel, each with a "Value" label and a
+-- "Roll" button. The button runs ProfileRequest:InvokeServer("RollCharacter", { kind = "Race" | "Talent" })
+-- and a ~3s animation; meanwhile the button reads "ROLLING …" and Value flips through names.
+-- With no spins left the same button opens the Robux shop, so it is only pressed while it says (RE)ROLL.
+-- Ranks: ProfileRequest:InvokeServer("Village", { action = "lineage_rank", amount = "<n>", hero = <heroSlot> }).
+-- Rank r -> r + 1 costs RunConfig.Torment.RankCost(r): 8 Valor and 20000 gold, x1.044 per rank.
+local heroTick
+do
+local creation = GameConfig and type(GameConfig.CharacterCreation) == "table" and GameConfig.CharacterCreation or {}
+local ROLLS = {
+    { kind = "Race",  panel = "RacePanel",   on = "autoRollRace",  picks = "rollRaces",  list = creation.Races },
+    { kind = "Trait", panel = "TalentPanel", on = "autoRollTrait", picks = "rollTraits", list = creation.Talents },
+}
+
+local function wanted(r, shown)
+    for _, d in ipairs(type(r.list) == "table" and r.list or {}) do
+        if type(d) == "table" and settings[r.picks][d.id] and string.lower(tostring(d.name)) == string.lower(shown) then
+            return true
+        end
+    end
+    return false
+end
+
+local function stopRoll(r, why)
+    settings[r.on] = false
+    save()
+    ui.hero[r.kind].refresh()
+    ui.hero[r.kind].status.Text = why
+end
+
+local function rollTick(r)
+    if not settings[r.on] then return end
+    local status = ui.hero[r.kind].status
+    if next(settings[r.picks]) == nil then status.Text = "Tick at least one " .. string.lower(r.kind) return end
+    local panel = gameUi.named[r.panel]
+    if not (panel and shownOnScreen(panel)) then status.Text = "Open Create / Edit Hero" return end
+    local value, button = panel:FindFirstChild("Value"), panel:FindFirstChild("Roll")
+    if not (value and button) then status.Text = "Roll button not found" return end
+    local text = string.upper(button.Text)
+    if text:find("ROLLING", 1, true) then status.Text = "Rolling…" return end
+    if wanted(r, value.Text) then stopRoll(r, "Got " .. value.Text) return end
+    if text:find("SURE?", 1, true) then stopRoll(r, "Bloodline warning: reroll by hand") return end
+    if not (text:sub(1, 5) == "ROLL " or text:sub(1, 7) == "REROLL ") then stopRoll(r, "No spins left (" .. value.Text .. ")") return end
+    if once("roll:" .. r.kind, 1.5) then
+        press(button)
+        status.Text = "Rerolling " .. value.Text
+    end
+end
+
+local Torment
+pcall(function() Torment = require(Shared:WaitForChild("RunConfig", 5)).Torment end)
+
+local function rankCost(rank)
+    if Torment and type(Torment.RankCost) == "function" then return Torment.RankCost(rank) end
+    local grow = 1.044 ^ rank
+    return math.max(1, math.floor(8 * grow + 0.5)), math.max(1, math.floor(20000 * grow + 0.5))
+end
+
+-- ranks we can buy right now without going under the reserves
+local function affordable(p)
+    local rank = math.max(0, math.floor(tonumber(p.lineage) or 0))
+    local valor = (tonumber(p.valor) or 0) - settings.rankKeepValor
+    local gold = (tonumber(p.gold) or 0) - settings.rankKeepGold
+    local n, most = 0, Torment and tonumber(Torment.MaxRanksPerPurchase) or 25
+    while n < most do
+        local v, g = rankCost(rank + n)
+        if valor < v or gold < g then break end
+        valor, gold, n = valor - v, gold - g, n + 1
+    end
+    return n, rank
+end
+
+local lastRank = 0
+local function rankTick()
+    local p, h = profile, ui.hero
+    if not p then return end
+    local n, rank = affordable(p)
+    local v, g = rankCost(rank)
+    h.rankNow.Text = tostring(rank)
+    h.rankNext.Text = string.format("%d Valor · %d gold", v, g)
+    if not settings.autoRank then return end
+    if n == 0 then h.rankStatus.Text = "Saving up for the next rank" return end
+    if villageBusy or battle or inBattleNow() or inAdventure() or os.clock() - lastRank < 5 then return end
+    local req = Remotes:FindFirstChild("ProfileRequest")
+    if not req then return end
+    lastRank, villageBusy = os.clock(), true
+    task.spawn(function()
+        local ok, res = pcall(function()
+            return req:InvokeServer("Village", {
+                action = "lineage_rank", amount = tostring(n),
+                hero = p.heroSlot ~= nil and tostring(p.heroSlot) or nil,
+            })
+        end)
+        villageBusy = false
+        local bought = ok and type(res) == "table" and res.ok ~= false
+        if bought and type(res.profile) == "table" then setProfile(res.profile) else requestProfile(true) end
+        if bought then
+            h.rankStatus.Text = string.format("Bought %d rank%s: now %d", n, n == 1 and "" or "s", rank + n)
+        else
+            h.rankStatus.Text = "Refused: " .. tostring(ok and type(res) == "table" and (res.message or res.error) or "no answer")
+            lastRank = os.clock() + 25 -- wait half a minute before asking again
+        end
+    end)
+end
+
+function heroTick()
+    for _, r in ipairs(ROLLS) do rollTick(r) end
+    rankTick()
+end
+end -- HERO LOGIC
 
 ---------------------------------------------------------------- PETS LOGIC
 -- Ranch:  RPGCommand:FireServer("Ranch", { action = "hatch", itemId = <egg item> })
@@ -4087,7 +4301,9 @@ RPGState.OnClientEvent:Connect(function(name, data)
         if not (type(data) == "table" and data.closed) then
             task.delay(1.5, L.resume) -- let the window open first, like a player would
         end
-    elseif name == "LightDialogue" and R.runOn("autoDeath") then
+    elseif name == "LightDialogue" then
+        L.onDeath()
+        if not R.runOn("autoDeath") then return end
         local payload = type(data) == "table" and data or {}
         task.delay(math.max(1, settings.runDelay), function()
             RPGCommand:FireServer("LightContinue", { passage = payload.passageRequired == true })
@@ -4142,6 +4358,91 @@ do
     end
 end
 
+---------------------------------------------------------------- PERFORMANCE
+-- Battles are 2D UI (PixelBattleView): PixelBattle > Scenery holds the sky bands, trees, bricks and
+-- grass as thousands of Frames, rebuilt for every battle. Low Graphics hides that layer (the sky and
+-- ground colours behind it stay), plus the 3D side: lowest render quality, no shadows / post effects /
+-- particles, flat materials, hidden decals. Parts stay that way until a rejoin; lighting and the
+-- scenery come back when it's off.
+-- Turn Off 3D: RunService:Set3dRenderingEnabled(false), the 3D world is not drawn (undone on unload).
+do
+local Lighting = game:GetService("Lighting")
+local EFFECTS = { ParticleEmitter = true, Trail = true, Beam = true, Smoke = true, Fire = true, Sparkles = true }
+local LIGHT_KEYS = { "GlobalShadows", "FogEnd", "EnvironmentDiffuseScale", "EnvironmentSpecularScale" }
+local lightingWas, qualityWas, watching
+
+local function rendering() return getfenv(0).settings().Rendering end -- the global settings(), shadowed here
+
+local function flatten(d)
+    if d:IsA("BasePart") then
+        d.Material, d.Reflectance, d.CastShadow = Enum.Material.SmoothPlastic, 0, false
+    elseif d:IsA("Decal") then -- Texture too
+        d.Transparency = 1
+    elseif EFFECTS[d.ClassName] then
+        d.Enabled = false
+    end
+end
+
+local function scenery(d)
+    if d.Name == "Scenery" and d:IsA("GuiObject") and d.Parent and d.Parent.Name == "PixelBattle" then
+        d.Visible = not (settings.lowGraphics and alive())
+    end
+end
+
+local function eachScenery()
+    for _, b in ipairs(PlayerGui:GetDescendants()) do
+        if b.Name == "PixelBattle" then
+            local s = b:FindFirstChild("Scenery")
+            if s then pcall(scenery, s) end
+        end
+    end
+end
+
+local function lower()
+    lightingWas = {}
+    for _, k in ipairs(LIGHT_KEYS) do lightingWas[k] = Lighting[k] end
+    Lighting.GlobalShadows, Lighting.FogEnd = false, 1e9
+    Lighting.EnvironmentDiffuseScale, Lighting.EnvironmentSpecularScale = 0, 0
+    for _, e in ipairs(Lighting:GetDescendants()) do
+        if e:IsA("PostEffect") then e.Enabled = false end
+    end
+    pcall(function()
+        qualityWas = rendering().QualityLevel
+        rendering().QualityLevel = Enum.QualityLevel.Level01
+    end)
+    pcall(function()
+        local t = workspace.Terrain
+        t.Decoration, t.WaterWaveSize, t.WaterReflectance = false, 0, 0
+    end)
+    for _, d in ipairs(workspace:GetDescendants()) do pcall(flatten, d) end
+    eachScenery()
+    if not watching then
+        watching = true
+        workspace.DescendantAdded:Connect(function(d)
+            if settings.lowGraphics and alive() then pcall(flatten, d) end
+        end)
+        PlayerGui.DescendantAdded:Connect(function(d)
+            if settings.lowGraphics and alive() then pcall(scenery, d) end
+        end)
+    end
+end
+
+local function restore()
+    for k, v in pairs(lightingWas) do Lighting[k] = v end
+    if qualityWas then pcall(function() rendering().QualityLevel = qualityWas end) end
+    lightingWas, qualityWas = nil, nil
+    eachScenery()
+end
+
+function ui.applyGraphics()
+    local on = alive()
+    pcall(function() RunService:Set3dRenderingEnabled(not (on and settings.no3d)) end)
+    if on and settings.lowGraphics and not lightingWas then lower()
+    elseif not (on and settings.lowGraphics) and lightingWas then restore() end
+end
+pcall(ui.applyGraphics)
+end -- PERFORMANCE
+
 task.spawn(function()
     local lastClick, lastSync, lastRunSync, lastSell, lastHome = 0, 0, 0, 0, 0
     while alive() and gui.Parent do
@@ -4177,6 +4478,7 @@ task.spawn(function()
         pcall(requestProfile)
         pcall(forgeTick)
         pcall(petTick)
+        pcall(heroTick)
         if (battle or inBattleNow()) and settings.combat then setLive("In battle", true)
         elseif inAdventure() and settings.autoRun then setLive("Run: " .. tostring(run and run.phase or "syncing"), true)
         elseif inAdventure() then setLive("Auto Run is off", false)
@@ -4280,6 +4582,7 @@ pcall(C.applyScrollFx)
 local function unload()
     if genv.__PixelHelperToken == RUN_TOKEN then genv.__PixelHelperToken = nil end
     pcall(C.applyScrollFx)
+    pcall(ui.applyGraphics)
     gui:Destroy()
 end
 ui.unloadBtn.MouseButton1Click:Connect(unload)
