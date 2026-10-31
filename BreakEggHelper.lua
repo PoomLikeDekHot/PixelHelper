@@ -39,7 +39,7 @@ local LocalPlayer = Players.LocalPlayer
 local Shared      = ReplicatedStorage:WaitForChild("Shared")
 
 local SAVE_FILE = "BreakEggHelper_Settings_" .. LocalPlayer.UserId .. ".json"
-local VERSION   = "2.1.1"
+local VERSION   = "2.2.0"
 
 -- stop the previous copy of this script (its loops check this token)
 local genv = (getgenv and getgenv()) or _G
@@ -149,6 +149,9 @@ local settings = {
     autoSell = false,    -- sell Backpack animals that make less than sellBelow $/s
     sellBelow = 0,
     autoIndex = false,   -- claim Index rewards when they are ready
+    minSteal = 0,        -- only steal animals making at least this much $/s (0 = always take the best)
+    winW = 820, winH = 520, -- window size (drag the edges or the corner)
+    uiScale = 100,       -- whole window, in %
     lang = nil,          -- "th" / "en" / "id" (first run: follows the Roblox language)
     tab = 1,
 }
@@ -297,6 +300,16 @@ local STR = {
     -- home
     ["Status"] = { "สถานะ", "Status" },
     ["Hi, %s"] = { "สวัสดี %s", "Halo, %s" },
+    ["Only steal from"] = { "ขโมยเฉพาะตัวที่ได้ตั้งแต่", "Curi hanya mulai dari" },
+    ["$/s or more. 0 = always take the best. Type like 25K, 1M"] = { "$/s ขึ้นไป ใส่ 0 = เอาตัวที่ดีสุดทุกรอบ พิมพ์ได้แบบ 25K, 1M", "$/s ke atas. 0 = selalu ambil yang terbaik. Tulis 25K, 1M" },
+    ["Best was %s, under %s: breaking more eggs"] = { "ตัวดีสุดได้ %s ต่ำกว่า %s ตีไข่ต่อ", "Terbaik %s, di bawah %s: lanjut pecahkan telur" },
+    ["Window"] = { "หน้าต่าง", "Jendela" },
+    ["Make the window bigger or smaller"] = { "ขยายหรือย่อหน้าต่าง", "Besarkan atau kecilkan jendela" },
+    ["Size"] = { "ขนาด", "Ukuran" },
+    ["Also drag the bottom-right corner to stretch it"] = { "ลากมุมขวาล่างเพื่อยืดหรือหดได้ด้วย", "Bisa juga tarik sudut kanan bawah" },
+    ["Reset size"] = { "คืนขนาดเดิม", "Ukuran awal" },
+    ["Back to 820 × 520 at 100%"] = { "กลับไปขนาด 820 × 520 ที่ 100%", "Kembali ke 820 × 520 di 100%" },
+    ["Reset"] = { "รีเซ็ต", "Reset" },
     ["What the bot is doing right now"] = { "ตอนนี้บอทกำลังทำอะไรอยู่", "Yang sedang dikerjakan bot sekarang" },
     ["Doing"] = { "กำลังทำ", "Sedang" }, ["Money"] = { "เงิน", "Uang" },
     ["Stolen this session"] = { "ขโมยได้รอบนี้", "Dicuri sesi ini" },
@@ -597,7 +610,8 @@ if not pcall(function() gui.Parent = parentGui end) then gui.Parent = LocalPlaye
 
 local SIDEBAR = 184
 local window = new("Frame", {
-    Name = "Window", Parent = gui, Size = UDim2.fromOffset(820, 520), Position = UDim2.new(0.5, -410, 0.5, -260),
+    Name = "Window", Parent = gui, Size = UDim2.fromOffset(math.max(600, tonumber(settings.winW) or 820), math.max(380, tonumber(settings.winH) or 520)),
+    Position = UDim2.new(0.5, -(tonumber(settings.winW) or 820) / 2, 0.5, -(tonumber(settings.winH) or 520) / 2),
     BackgroundColor3 = T.bg, BorderSizePixel = 0, ClipsDescendants = true,
 }, { corner(14), line(LINE2) })
 
@@ -673,7 +687,7 @@ do
     end
 end
 
-local setStatus, selectTab, tab, toast
+local setStatus, selectTab, tab, toast, applyScale
 local titleText, subtitleText
 do
     ---------------- sidebar
@@ -773,7 +787,72 @@ do
         end)
     end
 
-    ---------------- pages: two columns
+    ---------------- resize: drag the right edge, the bottom edge or the corner grip
+    do
+        local MIN_W, MIN_H = 600, 380
+        local function handle(props, glyph)
+            local h = new("TextButton", { Parent = window, AutoButtonColor = false, Text = "", BackgroundTransparency = 1, ZIndex = 20 })
+            for k, v in pairs(props) do h[k] = v end
+            return h
+        end
+        local right = handle({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 40), Size = UDim2.new(0, 8, 1, -60) })
+        local bottom = handle({ AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, SIDEBAR, 1, 0), Size = UDim2.new(1, -SIDEBAR - 20, 0, 8) })
+        local grip = handle({ AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -4, 1, -4), Size = UDim2.fromOffset(18, 18) })
+        for i = 1, 3 do -- three little dots in a diagonal: "you can pull here"
+            new("Frame", {
+                Parent = grip, BackgroundColor3 = T.faint, BorderSizePixel = 0, Size = UDim2.fromOffset(3, 3), ZIndex = 21,
+                Position = UDim2.fromOffset(15 - i * 5, 12), AnchorPoint = Vector2.new(0, 0),
+            }, { corner(2) })
+            if i > 1 then
+                new("Frame", { Parent = grip, BackgroundColor3 = T.faint, BorderSizePixel = 0, Size = UDim2.fromOffset(3, 3), ZIndex = 21,
+                    Position = UDim2.fromOffset(12, 15 - i * 5) }, { corner(2) })
+            end
+        end
+        grip.MouseEnter:Connect(function() for _, d in ipairs(grip:GetChildren()) do if d:IsA("Frame") then tween(d, { BackgroundColor3 = T.accentT }, MOTION.hover) end end end)
+        grip.MouseLeave:Connect(function() for _, d in ipairs(grip:GetChildren()) do if d:IsA("Frame") then tween(d, { BackgroundColor3 = T.faint }, MOTION.hover) end end end)
+
+        local mode, startSize, startInput
+        local function begin(which)
+            return function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    mode, startSize, startInput = which, window.AbsoluteSize, input.Position
+                end
+            end
+        end
+        right.InputBegan:Connect(begin("x"))
+        bottom.InputBegan:Connect(begin("y"))
+        grip.InputBegan:Connect(begin("xy"))
+        UserInputService.InputChanged:Connect(function(input)
+            if mode and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local scale = math.max(0.3, (tonumber(settings.uiScale) or 100) / 100)
+                local d = (input.Position - startInput) / scale -- the window is scaled: mouse pixels are bigger or smaller
+                local base = startSize / scale
+                local w = mode:find("x") and math.max(MIN_W, base.X + d.X) or base.X
+                local h = mode:find("y") and math.max(MIN_H, base.Y + d.Y) or base.Y
+                window.Size = UDim2.fromOffset(math.floor(w), math.floor(h))
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(input)
+            if mode and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+                mode = nil
+                settings.winW, settings.winH = window.Size.X.Offset, window.Size.Y.Offset
+                save()
+            end
+        end)
+    end
+
+    ---------------- pages: two columns, one column when the window is narrow
+    local pages = {}
+    local function layout(pg)
+        if main.AbsoluteSize.X / math.max(0.3, (tonumber(settings.uiScale) or 100) / 100) < 560 then
+            pg.left.Size, pg.right.Size = UDim2.new(1, 0, 0, 0), UDim2.new(1, 0, 0, 0)
+            pg.right.Position = UDim2.new(0, 0, 0, pg.left.AbsoluteSize.Y / math.max(0.3, (tonumber(settings.uiScale) or 100) / 100) + 14)
+        else
+            pg.left.Size, pg.right.Size = UDim2.new(0.5, -7, 0, 0), UDim2.new(0.5, -7, 0, 0)
+            pg.right.Position = UDim2.new(0.5, 7, 0, 0)
+        end
+    end
+    main:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() for _, pg in ipairs(pages) do layout(pg) end end)
     local function makePage()
         local page = new("ScrollingFrame", {
             Parent = main, Visible = false, BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -784,6 +863,10 @@ do
         local cols = new("Frame", { Parent = page, BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -36, 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
         local left = new("Frame", { Parent = cols, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(0.5, -7, 0, 0) }, { vlist(14) })
         local right = new("Frame", { Parent = cols, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(0.5, -7, 0, 0), Position = UDim2.new(0.5, 7, 0, 0) }, { vlist(14) })
+        local pg = { left = left, right = right }
+        table.insert(pages, pg)
+        left:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() layout(pg) end)
+        layout(pg)
         return page, left, right
     end
 
@@ -871,6 +954,9 @@ do
 
     ---------------- hide into a cat bubble (red dot or RightShift), tap the bubble to come back
     local windowScale = new("UIScale", { Parent = window })
+    local function baseScale() return math.clamp((tonumber(settings.uiScale) or 100) / 100, 0.5, 1.5) end
+    windowScale.Scale = baseScale()
+    applyScale = function() tween(windowScale, { Scale = baseScale() }, MOTION.enter) end
     local bubble = new("TextButton", {
         Parent = gui, AutoButtonColor = false, Text = "", Visible = false, Size = UDim2.fromOffset(58, 58),
         Position = UDim2.new(0, 24, 0.5, -29), BackgroundColor3 = T.card, BorderSizePixel = 0,
@@ -885,7 +971,7 @@ do
         hideToken += 1
         local mine = hideToken
         if hidden then
-            tween(windowScale, { Scale = 0.94 }, MOTION.leave)
+            tween(windowScale, { Scale = baseScale() * 0.94 }, MOTION.leave)
             task.delay(MOTION.leave.Time, function()
                 if mine ~= hideToken then return end
                 window.Visible = false
@@ -896,8 +982,8 @@ do
         else
             bubble.Visible = false
             window.Visible = true
-            windowScale.Scale = 0.94
-            tween(windowScale, { Scale = 1 }, MOTION.pop)
+            windowScale.Scale = baseScale() * 0.94
+            tween(windowScale, { Scale = baseScale() }, MOTION.pop)
         end
     end
     btnHide.MouseButton1Click:Connect(function() setHidden(true) end)
@@ -993,7 +1079,7 @@ local function switchRow(parent, title, sub, key, onChange, image)
 end
 
 -- [ − 20 + ] box on the right of a row; the number can also be typed
-local function stepperRow(parent, title, sub, key, min, max, step, fmt)
+local function stepperRow(parent, title, sub, key, min, max, step, fmt, onChange)
     local r = row(parent, title, sub)
     local box = new("Frame", { Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0 }, { corner(8), line(LINE2) })
     rightAnchor(box, 96, 28)
@@ -1016,6 +1102,7 @@ local function stepperRow(parent, title, sub, key, min, max, step, fmt)
     local function apply(v)
         settings[key] = math.clamp(math.floor(v / step + 0.5) * step, min, max)
         save(); refresh()
+        if onChange then onChange() end
         num.TextColor3 = T.accentT
         tween(num, { TextColor3 = T.text })
     end
@@ -1023,6 +1110,47 @@ local function stepperRow(parent, title, sub, key, min, max, step, fmt)
     plus.MouseButton1Click:Connect(function() apply(settings[key] + step) end)
     num.FocusLost:Connect(function() apply(tonumber(num.Text:match("[%d%.]+") or "") or settings[key]) end)
     refresh()
+end
+
+-- a money box on the right of a row: type 500, 25K, 1.5M; it shows "$1.5M/s"
+local amountRow
+do
+local AMOUNT_UNITS = { { 1e18, "Qi" }, { 1e15, "Qa" }, { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }
+local function readAmount(text)
+    text = tostring(text):gsub(",", ""):gsub("%$", ""):gsub("/s", "")
+    local num, suf = text:match("^%s*([%d%.]+)%s*(%a*)")
+    if not num then return nil end
+    local mult = 1
+    for _, u in ipairs(AMOUNT_UNITS) do if string.lower(u[2]) == string.lower(suf) then mult = u[1] end end
+    return (tonumber(num) or 0) * mult
+end
+local function showAmount(n)
+    n = tonumber(n) or 0
+    for _, u in ipairs(AMOUNT_UNITS) do
+        if n >= u[1] then return "$" .. (string.format("%.2f", n / u[1]):gsub("0+$", ""):gsub("%.$", "")) .. u[2] .. "/s" end
+    end
+    return "$" .. math.floor(n) .. "/s"
+end
+amountRow = function(parent, title, sub, key, image)
+    local r = row(parent, title, sub, nil, image)
+    local box = new("TextBox", {
+        Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false, PlaceholderText = "0",
+        PlaceholderColor3 = T.faint, FontFace = FONT_BOLD, TextSize = 12, TextColor3 = T.text, Text = "",
+    }, { corner(8), line(LINE2) })
+    rightAnchor(box, 100, 28)
+    local function show() box.Text = (tonumber(settings[key]) or 0) > 0 and showAmount(settings[key]) or "" end
+    box.Focused:Connect(function() tween(box, { BackgroundColor3 = T.raised }, MOTION.hover) end)
+    box.FocusLost:Connect(function()
+        tween(box, { BackgroundColor3 = T.bg }, MOTION.hover)
+        local v = readAmount(box.Text)
+        if v then settings[key] = v; save() elseif box.Text == "" then settings[key] = 0; save() end
+        show()
+        box.TextColor3 = T.accentT
+        tween(box, { TextColor3 = T.text })
+    end)
+    show()
+    return box
+end
 end
 
 -- a full-width button row: title/sub on the left, the button on the right. returns the button
@@ -1070,6 +1198,7 @@ placedText.Text = "0"
 do -- round options (farm tab) and the settings tab
     local roundCard = card(tab.farm.L, 2, "Round", "How long to break eggs and where to go after a steal", IMG.swing, T.amber)
     stepperRow(roundCard, "Break eggs for", "Seconds, then steal the best $/s", "window", 0, 120, 5, "%ds")
+    amountRow(roundCard, "Only steal from", "$/s or more. 0 = always take the best. Type like 25K, 1M", "minSteal", IMG.cash)
     switchRow(roundCard, "Place in the pen", "Off: only run back over the red line", "placeInPen")
     stepperRow(roundCard, "Place after", "Animals in the bag before going to the pen", "carry", 1, 50, 1)
 
@@ -1086,6 +1215,15 @@ do -- round options (farm tab) and the settings tab
     local speedCard, speedHead = card(tab.set.L, 2, "Walk Speed", "Off: the bot runs at your normal game speed", IMG.walk, T.sky)
     switch(speedHead, function() return settings.speedOn end, function() settings.speedOn = not settings.speedOn; save() end)
     stepperRow(speedCard, "Speed", "Roblox default is 16", "walkSpeed", 16, 500, 5)
+
+    local winCard = card(tab.set.L, 3, "Window", "Make the window bigger or smaller", IMG.cat, T.accent)
+    stepperRow(winCard, "Size", "Also drag the bottom-right corner to stretch it", "uiScale", 60, 140, 5, "%d%%", function() applyScale() end)
+    buttonRow(winCard, "Reset size", "Back to 820 × 520 at 100%", "Reset", T.accent, 84).MouseButton1Click:Connect(function()
+        settings.uiScale, settings.winW, settings.winH = 100, 820, 520
+        save()
+        tween(window, { Size = UDim2.fromOffset(820, 520) }, MOTION.enter)
+        applyScale()
+    end)
 
     local optCard = card(tab.set.R, 1, "Options", "Movement and staying online", "≡", T.violet)
     switchRow(optCard, "Walk around walls", "Off: run in a straight line", "pathfind")
@@ -2076,6 +2214,20 @@ local function finishRound()
             end
         end
     end
+    -- the money filter: nothing at or above the minimum this round -> steal nothing, break more eggs
+    local minCash = tonumber(settings.minSteal) or 0
+    if minCash > 0 then
+        local keep = {}
+        for _, a in ipairs(list) do if a.cash >= minCash then table.insert(keep, a) end end
+        if #keep == 0 then
+            print(string.format("[LAIKAHUB] best this round %s, under the minimum %s: not stealing", shortCash(list[1].cash), shortCash(minCash)))
+            stepText.Text = L("Best was %s, under %s: breaking more eggs", shortCash(list[1].cash), shortCash(minCash))
+            task.wait(1)
+            resetRound()
+            return
+        end
+        list = keep
+    end
     -- the best one first; if someone else grabs it, try the next
     for _, a in ipairs(list) do
         if not farmOn() then break end
@@ -2527,16 +2679,6 @@ local function smartEquip()
     return swaps
 end
 
--- "25K" / "1.5m" / "$500" -> number
-local function parseAmount(text)
-    text = tostring(text):gsub(",", ""):gsub("%$", "")
-    local num, suf = text:match("^%s*([%d%.]+)%s*(%a*)")
-    if not num then return nil end
-    local mult = 1
-    for k, v in pairs(SUFFIX) do if string.lower(k) == string.lower(suf) then mult = v end end
-    return (tonumber(num) or 0) * mult
-end
-
 -- Sell Backpack animals under the threshold. returns how many were sold, or nil + reason.
 -- The server can turn a batch down, so it goes in passes: everything at once, then groups of 20, then one by
 -- one for whatever is still there; it stops when nothing under the limit is left or a pass sells nothing.
@@ -2650,21 +2792,7 @@ end
 do local sellCard, sellHead = card(tab.pets.L, 2, "Auto Sell", "Sells animals in your bag that make less than this", IMG.sell, T.amber)
 switch(sellHead, function() return settings.autoSell end, function() settings.autoSell = not settings.autoSell; save() end)
 do
-    local r = row(sellCard, "Sell below", "$/s per animal. Type like 500, 25K, 1.5M")
-    local box = new("TextBox", {
-        Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false, PlaceholderText = "25K",
-        PlaceholderColor3 = T.faint, FontFace = FONT_BOLD, TextSize = 12, TextColor3 = T.text, Text = "",
-    }, { corner(8), line(LINE2) })
-    rightAnchor(box, 96, 28)
-    local function show() box.Text = (tonumber(settings.sellBelow) or 0) > 0 and money(settings.sellBelow) .. "/s" or "" end
-    box.Focused:Connect(function() tween(box, { BackgroundColor3 = T.raised }, MOTION.hover) end)
-    box.FocusLost:Connect(function()
-        tween(box, { BackgroundColor3 = T.bg }, MOTION.hover)
-        local v = parseAmount(box.Text)
-        if v then settings.sellBelow = v; save() end
-        show()
-    end)
-    show()
+    amountRow(sellCard, "Sell below", "$/s per animal. Type like 500, 25K, 1.5M", "sellBelow")
 end
 do
     local r
