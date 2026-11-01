@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/c2GJGSnAwr" -- bug reports and help
-local VERSION     = "1.8.0" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.8.1" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -183,7 +183,7 @@ local settings = {
     -- discord webhook: post each finished run
     webhookOn = false, webhookUrl = "", hookVictoryOnly = false, hookItems = true, hookHideName = false,
     -- window
-    winW = 820, winH = 520,
+    winW = 820, winH = 520, uiAuto = true, uiScale = 100, -- uiAuto: shrink to fit small screens (phones)
     -- performance
     lowGraphics = false, no3d = false,
 }
@@ -677,19 +677,37 @@ local shadow = new("ImageLabel", {
     ScaleType = Enum.ScaleType.Slice, SliceCenter = Rect.new(49, 49, 450, 450),
 })
 
+-- anchored at its centre so the UIScale below shrinks it in place
 local window = new("Frame", {
     Name = "Window", Parent = gui, Size = UDim2.fromOffset(WIDTH, HEIGHT),
-    Position = UDim2.new(0.5, -WIDTH / 2, 0.5, -HEIGHT / 2),
+    AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
     BackgroundColor3 = T.bg, BorderSizePixel = 0, ClipsDescendants = true,
 }, { corner(R_CARD), line(LINE2) })
 
+-- whole-window scale. Auto: as big as on PC, smaller when the screen can't fit it (phones, tablets)
+local function screenSize()
+    local s = gui.AbsoluteSize
+    if s.X < 1 then s = workspace.CurrentCamera.ViewportSize end
+    return s
+end
+local function uiScale()
+    if settings.uiAuto ~= false then
+        local s = screenSize()
+        return math.clamp(math.min((s.X - 16) / WIDTH, (s.Y - 16) / HEIGHT), 0.4, 1)
+    end
+    return math.clamp((tonumber(settings.uiScale) or 100) / 100, 0.4, 1.5)
+end
+local windowScale = new("UIScale", { Parent = window, Scale = uiScale() })
+
 local function syncShadow()
-    shadow.Position = window.Position - UDim2.fromOffset(30, 26)
+    local a = window.AbsolutePosition - gui.AbsolutePosition
+    shadow.Position = UDim2.fromOffset(a.X - 30, a.Y - 26)
     shadow.Size = UDim2.fromOffset(window.AbsoluteSize.X + 60, window.AbsoluteSize.Y + 60)
     shadow.Visible = window.Visible
 end
 window:GetPropertyChangedSignal("Position"):Connect(syncShadow)
 window:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncShadow)
+window:GetPropertyChangedSignal("AbsolutePosition"):Connect(syncShadow)
 window:GetPropertyChangedSignal("Visible"):Connect(syncShadow)
 syncShadow()
 
@@ -779,10 +797,11 @@ local STACK_BELOW = 580
 local pages = {}
 
 local function layoutPage(p)
-    if main.AbsoluteSize.X < STACK_BELOW then
+    local k = windowScale.Scale -- AbsoluteSize is after scaling; layout works in unscaled pixels
+    if main.AbsoluteSize.X / k < STACK_BELOW then
         p.left.Size = UDim2.new(1, 0, 0, 0)
         p.right.Size = UDim2.new(1, 0, 0, 0)
-        p.right.Position = UDim2.new(0, 0, 0, p.left.AbsoluteSize.Y + 14)
+        p.right.Position = UDim2.new(0, 0, 0, p.left.AbsoluteSize.Y / k + 14)
     else
         p.left.Size = UDim2.new(0.5, -7, 0, 0)
         p.right.Size = UDim2.new(0.5, -7, 0, 0)
@@ -2095,15 +2114,20 @@ do
 local winCard = card(col.setL, 1, "▢", T.accent, "Window", "Size and visibility")
 footerNote(winCard, "Red dot (top left) hides the window into the cat bubble. Click the bubble to bring it back. RightShift does the same.")
 footerNote(winCard, "Drag the right edge, bottom edge or corner to resize. The size is remembered.")
+switchRow(winCard, "Auto Scale", "Smaller on phones, full size on PC", "uiAuto", function() ui.applyScale() end)
+sliderRow(winCard, "Scale", "Used when Auto Scale is off", "uiScale", 40, 150, 5, "%d%%", nil, function()
+    if settings.uiAuto == false then ui.applyScale() end
+end)
 do
-    local r = row(winCard, "Reset size", "Back to 820 × 520")
+    local r = row(winCard, "Reset size", "Back to 820 × 520, Auto Scale")
     local b = primaryButton(r, "Reset", 76)
     b.MouseButton1Click:Connect(function()
         WIDTH, HEIGHT = 820, 520
-        settings.winW, settings.winH = WIDTH, HEIGHT
+        settings.winW, settings.winH, settings.uiAuto = WIDTH, HEIGHT, true
         save()
         window.Size = UDim2.fromOffset(WIDTH, HEIGHT)
-        window.Position = UDim2.new(0.5, -WIDTH / 2, 0.5, -HEIGHT / 2)
+        window.Position = UDim2.fromScale(0.5, 0.5)
+        ui.applyScale()
     end)
 end
 
@@ -4519,14 +4543,19 @@ local bubbleDot = new("Frame", {
     BackgroundColor3 = T.faint, BorderSizePixel = 0, ZIndex = 22,
 }, { corner(6), new("UIStroke", { Color = T.card, Thickness = 2 }) })
 
-local windowScale = new("UIScale", { Parent = window })
+ui.applyScale = function()
+    if window.Visible then tween(windowScale, { Scale = uiScale() }, MOTION.enter) else windowScale.Scale = uiScale() end
+end
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() -- rotate phone / resize Roblox window
+    if settings.uiAuto ~= false then ui.applyScale() end
+end)
 local hideToken = 0
 local function setHidden(hidden)
     hideToken += 1
     local mine = hideToken
     if hidden then
         -- shrink the window a little, then swap it for the bubble
-        tween(windowScale, { Scale = 0.94 }, MOTION.leave)
+        tween(windowScale, { Scale = uiScale() * 0.94 }, MOTION.leave)
         task.delay(MOTION.leave.Time, function()
             if mine ~= hideToken then return end -- reopened meanwhile
             window.Visible = false
@@ -4537,8 +4566,8 @@ local function setHidden(hidden)
     else
         bubble.Visible = false
         window.Visible = true
-        windowScale.Scale = 0.94
-        tween(windowScale, { Scale = 1 }, MOTION.enter)
+        windowScale.Scale = uiScale() * 0.94
+        tween(windowScale, { Scale = uiScale() }, MOTION.enter)
     end
 end
 btnHide.MouseButton1Click:Connect(function() setHidden(true) end)
@@ -4592,26 +4621,30 @@ do
     local function grip(name, props, dx, dy)
         local g = new("TextButton", { Parent = window, Name = name, Text = "", AutoButtonColor = false, BackgroundTransparency = 1, ZIndex = 50 })
         for k, v in pairs(props) do g[k] = v end
-        local dragging, startSize, startMouse
+        local dragging, startSize, startMouse, startPos, k
         g.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging, startSize, startMouse = true, Vector2.new(WIDTH, HEIGHT), input.Position
+                dragging, startSize, startMouse, startPos, k = true, Vector2.new(WIDTH, HEIGHT), input.Position, window.Position, windowScale.Scale
             end
         end)
         UserInputService.InputChanged:Connect(function(input)
             if not dragging then return end
             if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
-            local d = input.Position - startMouse
-            local screen = gui.AbsoluteSize
-            WIDTH  = math.clamp(startSize.X + d.X * dx, MIN_W, math.max(MIN_W, screen.X - 20))
-            HEIGHT = math.clamp(startSize.Y + d.Y * dy, MIN_H, math.max(MIN_H, screen.Y - 20))
+            -- the window is scaled by k: screen pixels -> window pixels
+            local d = (input.Position - startMouse) / k
+            local screen = screenSize() / k
+            WIDTH  = math.floor(math.clamp(startSize.X + d.X * dx, MIN_W, math.max(MIN_W, screen.X - 20)))
+            HEIGHT = math.floor(math.clamp(startSize.Y + d.Y * dy, MIN_H, math.max(MIN_H, screen.Y - 20)))
             window.Size = UDim2.fromOffset(WIDTH, HEIGHT)
+            -- anchored at the centre: move by half the growth so the left / top edge stays put
+            window.Position = startPos + UDim2.fromOffset((WIDTH - startSize.X) * k / 2, (HEIGHT - startSize.Y) * k / 2)
         end)
         UserInputService.InputEnded:Connect(function(input)
             if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
                 dragging = false
                 settings.winW, settings.winH = WIDTH, HEIGHT
                 save()
+                if settings.uiAuto ~= false then ui.applyScale() end
             end
         end)
         return g
