@@ -163,7 +163,7 @@ local settings = {
     campChoice = 2, shrineTrain = true, altarOffer = false,
     shopBuy = { potion = false, tonic = false, whetstone = false, ward = false },
     autoContinue = true, autoChest = true, autoDeath = true, autoResume = true,
-    storyNextAct = true, storyExitAct = 0,
+    storyNextAct = true, storyLeave = nil, storyExitAct = 0, -- storyLeave nil: set from an older save below
     tormentNextTier = true, tormentExitTier = 0,
     autoReplay = true, autoCastle = true,
     -- auto sell
@@ -211,6 +211,9 @@ do -- fill in anything added since the last save
     for _, item in ipairs(SHOP_ITEMS) do
         if settings.shopBuy[item.id] == nil then settings.shopBuy[item.id] = false end
     end
+    -- older saves used "Leave after Act" 0 = never; now a switch turns it on and the slider starts at 1
+    if settings.storyLeave == nil then settings.storyLeave = (tonumber(settings.storyExitAct) or 0) > 0 end
+    if (tonumber(settings.storyExitAct) or 0) < 1 then settings.storyExitAct = 10 end
     if type(settings.statPlan) ~= "table" then settings.statPlan = {} end
     local planned = {}
     for _, s in ipairs(settings.statPlan) do planned[s.id] = true end
@@ -1552,8 +1555,9 @@ switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head bac
 
 local endCard = card(col.runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
-switchRow(endCard, "Auto Next Act", "Off: stop after the first act (unless Leave after Act is set)", "storyNextAct")
-sliderRow(endCard, "Leave after Act", "Goes home from the map once this act's boss is down", "storyExitAct", 0, 15, 1, "Act %d", "End")
+switchRow(endCard, "Auto Next Act", "On: keep playing act after act. Off: stop after the first act", "storyNextAct")
+switchRow(endCard, "Auto Leave When Finished Act", "On: go home once the act below is cleared", "storyLeave")
+sliderRow(endCard, "Leave after Act", "Used while Auto Leave is on", "storyExitAct", 1, 15, 1, "Act %d")
 sectionLabel(endCard, "Torment Tower  ·  all 3 lands are played")
 switchRow(endCard, "Auto Next Floor", "Climb to the next floor after land 3", "tormentNextTier")
 sliderRow(endCard, "Stop after Floor", "Back to castle once this floor is cleared", "tormentExitTier", 0, 100, 1, "Floor %d", "Never")
@@ -2863,9 +2867,9 @@ local function modeOf(state)
     return "story"
 end
 
--- the act to stop after: the "Leave after Act" slider when set, else the first act when Auto Next Act is off
+-- the act to stop after: "Leave after Act" while Auto Leave is on, else the first act when Auto Next Act is off
 local function storyExitAct(state)
-    if settings.storyExitAct > 0 then return settings.storyExitAct end
+    if settings.storyLeave then return settings.storyExitAct end
     if not settings.storyNextAct then return tonumber(state.startAct) or 1 end
     return 0 -- never
 end
