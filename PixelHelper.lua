@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/c2GJGSnAwr" -- bug reports and help
-local VERSION     = "1.9.2" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.9.3" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -2247,18 +2247,25 @@ local function waitUntilServer(t)
     end
 end
 
+-- Run f in its own thread: a game handler that waits (a tween, the server, the next battle)
+-- must not hold up the main loop, or attacks and the status stop until it returns.
+local function runAside(f, ...)
+    local ok = coroutine.resume(coroutine.create(f), ...)
+    return ok
+end
+
 -- press a game button (the game's own handlers run)
 local function press(btn)
     if not (btn and btn.Parent) then return false end
     local ok = false
     if firesignal then
-        ok = pcall(firesignal, btn.Activated)
-        if not ok then ok = pcall(firesignal, btn.MouseButton1Click) end
+        ok = runAside(firesignal, btn.Activated)
+        if not ok then ok = runAside(firesignal, btn.MouseButton1Click) end
     end
     if not ok and getconnections then
         for _, sig in ipairs({ btn.Activated, btn.MouseButton1Click }) do
             for _, c in ipairs(getconnections(sig)) do
-                if pcall(function() c:Fire() end) then ok = true end
+                if runAside(function() c:Fire() end) then ok = true end
             end
         end
     end
@@ -4500,6 +4507,17 @@ end)
 end -- WEBHOOK LOGIC
 
 ---------------------------------------------------------------- events
+-- Mid-run drops land in the bag right away, but the game only pushes the bag now and then:
+-- ask for it after loot so Auto Sell sells during the run instead of back in the lobby.
+local function bagAfterLoot()
+    if not settings.autoSell then return end
+    for _, t in ipairs({ 2, 6 }) do
+        task.delay(t, function()
+            if alive() then pcall(requestProfile, true) end
+        end)
+    end
+end
+
 RPGState.OnClientEvent:Connect(function(name, data)
     if not alive() then return end
     if name == "BattleStarted" or name == "BattleUpdated" then
@@ -4535,12 +4553,15 @@ RPGState.OnClientEvent:Connect(function(name, data)
         L.onLobbyState(data)
     elseif name == "RunGearDrop" and type(data) == "table" then
         Hook.onGearDrop(data)
+        bagAfterLoot()
     elseif name == "BossChestLoot" and type(data) == "table" then
         Hook.onChestLoot(data)
+        bagAfterLoot()
     elseif name == "Profile" and type(data) == "table" then
         local p = data.profile or data
         if type(p) == "table" and (p.gearBag or p.gear) then
             setProfile(p)
+            if settings.autoSell and not battle then pcall(sellNow, false) end
         end
     elseif name == "RunResumeOffer" and settings.autoResume then
         if not (type(data) == "table" and data.closed) then
@@ -4723,7 +4744,7 @@ task.spawn(function()
         pcall(forgeTick)
         pcall(petTick)
         pcall(heroTick)
-        if (battle or inBattleNow()) and settings.combat then setLive("In battle", true)
+        if battle or inBattleNow() then setLive(settings.combat and "In battle" or "In battle · Auto Combat off", settings.combat)
         elseif inAdventure() and settings.autoRun then setLive("Run: " .. tostring(run and run.phase or "syncing"), true)
         elseif inAdventure() then setLive("Auto Run is off", false)
         elseif settings.auto then setLive("Auto Start armed", true)
