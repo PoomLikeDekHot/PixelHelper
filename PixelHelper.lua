@@ -144,6 +144,7 @@ local settings = {
     tab = 1, antiAfk = true,
     -- lobby
     mode = 1, diff = { 1, 1 }, act = 1, tier = 1, modifier = 1, auto = false, stopOnDeath = true,
+    tierPick = 1, -- Torment floor: 1 the number below, 2 highest (best this month + 1)
     autoSlot = false, slot = 1, -- pick this character on the select screen
     autoRejoin = true, rejoinAfter = 40, lobbyPlaceId = 0, -- stuck on the boot screen -> rejoin
     -- combat
@@ -1076,7 +1077,10 @@ end
 
 local function lobbyDescribe(floor)
     local mode = MODES[settings.mode]
-    if mode.id == "torment" then return "Torment Floor " .. (floor or settings.tier) end
+    if mode.id == "torment" then
+        if floor then return "Torment Floor " .. floor end
+        return settings.tierPick == 2 and "Torment · Highest floor" or ("Torment Floor " .. settings.tier)
+    end
     if not mode.difficulties then return mode.name end
     local diff = mode.difficulties[settings.diff[settings.mode] or 1]
     local mod = lobbyModifier()
@@ -1336,7 +1340,12 @@ for i = 1, MODES[1].acts do
     b.MouseButton1Click:Connect(function() settings.act = i; save(); refreshLobby() end)
 end
 
-local tierRow = row(stageCard, "Torment Floor", "Lowered to your best this month + 1")
+local tierPickRow = row(stageCard, "Torment Floor", "Highest: your best this month + 1", 48)
+local tierPickBar, refreshPick = segmented(tierPickRow, { "Number", "Highest" }, function() return settings.tierPick end, function(i)
+    settings.tierPick = i; save(); refreshLobby()
+end)
+rightAnchor(tierPickBar, 156, 28)
+local tierRow = row(stageCard, "Floor", "Lowered to your best this month + 1")
 local _, refreshTier = stepper(tierRow, function() return settings.tier end, function(v)
     settings.tier = v; save(); refreshLobby()
 end, 1, 1, MODES[3].tiers, "%d")
@@ -1389,7 +1398,9 @@ function refreshLobby()
     end
     diffRow.Visible = mode.difficulties ~= nil
     actRow.Visible = mode.acts ~= nil
-    tierRow.Visible = mode.id == "torment"
+    tierPickRow.Visible = mode.id == "torment"
+    tierRow.Visible = mode.id == "torment" and settings.tierPick ~= 2
+    refreshPick()
     modRow.Visible = mode.modifiers == true
     local mod = MODIFIERS[settings.modifier] or MODIFIERS[1]
     modName.Text = string.upper(mod.name)
@@ -2384,12 +2395,14 @@ local lobbyState, hostedAt = nil, -math.huge
 
 -- Torment Tower resets every month (TormentTower.Season): a floor above your best this season + 1 is
 -- refused with "Clear floor N first", so the saved floor is lowered to TormentConfig.MaxTier.
+-- "Highest" always takes that floor: the next one to climb.
 local function tormentFloor()
     local floor = settings.tier
     if not profile then return floor end
     pcall(function()
         local Torment = require(Shared:WaitForChild("RunConfig", 5)).Torment
-        floor = math.min(floor, Torment.MaxTier(profile, Torment.Tower.Season(workspace:GetServerTimeNow())))
+        local top = Torment.MaxTier(profile, Torment.Tower.Season(workspace:GetServerTimeNow()))
+        floor = settings.tierPick == 2 and top or math.min(floor, top)
     end)
     return floor
 end
