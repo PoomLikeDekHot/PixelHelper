@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/c2GJGSnAwr" -- bug reports and help
-local VERSION     = "1.9.0" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.9.2" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -1566,7 +1566,7 @@ switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head bac
 
 local endCard = card(col.runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
-switchRow(endCard, "Auto Next Act", "On: keep playing act after act. Off: stop after the first act", "storyNextAct")
+switchRow(endCard, "Auto Next Act", "On: act after act. Off: replay the act (Auto Replay) or go home", "storyNextAct")
 switchRow(endCard, "Auto Leave When Finished Act", "On: go home once the act below is cleared", "storyLeave")
 sliderRow(endCard, "Leave after Act", "Used while Auto Leave is on", "storyExitAct", 1, 15, 1, "Act %d")
 sectionLabel(endCard, "Torment Tower  ·  all 3 lands are played")
@@ -2871,6 +2871,14 @@ local function runOn(key) return settings.autoRun and (key == nil or settings[ke
 local function runSend(state, payload)
     payload.runId, payload.round, payload.phase = state.id, state.round, state.phase
     RPGCommand:FireServer("RunAction", payload)
+    -- the server doesn't always push RunState after an action (a shop buy, for one): like the game's
+    -- map (RunMapView:RequestState), ask for it when the screen hasn't moved on a second later
+    task.delay(1, function()
+        local r = run
+        if r and r.id == state.id and r.round == state.round and r.phase == state.phase then
+            pcall(function() RPGCommand:FireServer("RunAction", { action = "state" }) end)
+        end
+    end)
 end
 
 local function modeOf(state)
@@ -2908,10 +2916,24 @@ local function leaveAfterThisAct(state)
     return exitAct > 0 and (tonumber(state.act) or 1) >= exitAct
 end
 
+-- "LAND CLEARED!" with Auto Next Act and Auto Leave off: Auto Replay plays the same act again
+-- (the REPLAY LAND card) instead of going home, so a run can loop one act.
+-- "LAND CLEARED!" (RunMapView: phase "choose" with state.landCleared set) offers REPLAY LAND / NEXT LAND
+local function landCleared(state)
+    return state.landCleared ~= nil and state.landCleared ~= false
+        or hasCard(state, "replayLand") or hasCard(state, "nextLand")
+end
+
+local function replayThisAct(state)
+    return landCleared(state) and modeOf(state) == "story" and not state.dungeon
+        and settings.autoReplay and not settings.storyNextAct and not settings.storyLeave
+        and hasCard(state, "replayLand")
+end
+
 -- leave the run from this map screen: past the wanted act, or on "LAND CLEARED!" after it
 local function leavingNow(state)
-    if state.dungeon then return false end
-    return wantsToLeave(state) or (state.landCleared == true and leaveAfterThisAct(state))
+    if state.dungeon or replayThisAct(state) then return false end
+    return wantsToLeave(state) or (landCleared(state) and leaveAfterThisAct(state))
 end
 
 -- RunConfig.Roads: a path card may carry a road (card.road = id) of kind "risk", "safe" or "field"
@@ -2943,6 +2965,7 @@ local function choosePath(state)
         return best
     end
     if indexOf("boss") then return indexOf("boss"), "Boss" end
+    if replayThisAct(state) then return indexOf("replayLand"), "Replay Land (Act " .. tostring(state.act) .. ")" end
     if leavingNow(state) and indexOf("retreat") then return indexOf("retreat"), "Turn Back (leaving)" end
     -- "LAND CLEARED!" after an act boss: Continue Adventure (nextLand) or Replay Land (replayLand)
     if indexOf("nextLand") then return indexOf("nextLand"), "Continue Adventure" end
@@ -2974,10 +2997,23 @@ local function iAmReady(state)
     return false
 end
 
+local buyTries = {} -- [run:round .. item] = buys sent
 local function handleEvent(state)
     local ev = type(state.eventData) == "table" and state.eventData or {}
     local kind = ev.kind
     local key = tostring(state.id) .. ":" .. tostring(state.round)
+
+    -- still on this event long after it opened: press the game's own "TO BATTLE!" button
+    if os.clock() - runAt > 15 and not iAmReady(state) and once(key .. ":readyButton", 5) then
+        for d in pairs(gameUi.buttons) do
+            local text = d.Visible and string.upper(d.Text) or ""
+            if (text == "DONE - TO BATTLE!" or text == "TO BATTLE!") and shownOnScreen(d) then
+                press(d)
+                setRunStatus("Event: pressed To Battle")
+                return
+            end
+        end
+    end
 
     if kind == "camp" then
         if once(key .. ":camp", 5) then
@@ -2999,18 +3035,26 @@ local function handleEvent(state)
             return
         end
     elseif kind == "shop" then
+        -- state.eventBought[userId][item] = true once the server sold it (the game shows SOLD).
+        -- A buy the server drops is sent again, up to 3 times, 2s apart.
         local gold = tonumber(myMember(state).gold) or math.huge
+        local mine = type(state.eventBought) == "table" and state.eventBought[tostring(LocalPlayer.UserId)]
+        local bought = type(mine) == "table" and mine or {}
         for _, item in ipairs(type(ev.items) == "table" and ev.items or {}) do
+            local id = tostring(item.id)
             local price = tonumber(item.price) or 0
-            if settings.shopBuy[item.id] and price <= gold and once(key .. ":buy:" .. tostring(item.id)) then
+            local tries = buyTries[key .. id] or 0
+            if settings.shopBuy[item.id] and not bought[id] and price <= gold and tries < 3 then
+                if not once(key .. ":buy:" .. id, 2) then return end -- wait for the answer
+                buyTries[key .. id] = tries + 1
                 runSend(state, { action = "eventChoice", item = item.id })
-                setRunStatus("Shop: bought " .. tostring(item.label or item.id))
+                setRunStatus("Shop: buying " .. tostring(item.label or id))
                 return -- one purchase per tick; the next tick buys the next one
             end
         end
     end
 
-    if not iAmReady(state) and once(key .. ":ready", 5) then
+    if not iAmReady(state) and once(key .. ":ready", 3) then
         runSend(state, { action = "eventReady" })
         setRunStatus("Event done: " .. tostring(kind or "?"))
     end
@@ -3144,7 +3188,8 @@ local function tickRun()
             end
         end
     elseif phase == "event" then
-        handleEvent(state)
+        -- the battle after an event can start before a new RunState arrives: leave the event alone then
+        if not (battle or inBattleNow()) then handleEvent(state) end
     elseif SOUL_PHASES[phase] and type(state.soulswap) == "table" then
         if runOn("autoSoul") then handleSoul(state) end
     elseif phase == "story" then
