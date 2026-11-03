@@ -39,7 +39,7 @@ local LocalPlayer = Players.LocalPlayer
 local Shared      = ReplicatedStorage:WaitForChild("Shared")
 
 local SAVE_FILE = "BreakEggHelper_Settings_" .. LocalPlayer.UserId .. ".json"
-local VERSION   = "2.0.0"
+local VERSION   = "2.2.0"
 
 -- stop the previous copy of this script (its loops check this token)
 local genv = (getgenv and getgenv()) or _G
@@ -84,17 +84,17 @@ local TreadUpCfg    = tryRequire(Shared:FindFirstChild("TreadmillUpgradeConfig")
 -- prices as shipped in the game's config modules, used when a require fails
 PICKAXES = {}
 if PickaxeCfg and type(PickaxeCfg.Tiers) == "table" then
-    for i, t in ipairs(PickaxeCfg.Tiers) do PICKAXES[i] = { name = t.Name, price = t.Price or 0 } end
+    for i, t in ipairs(PickaxeCfg.Tiers) do PICKAXES[i] = { name = t.Name, price = t.Price or 0, template = t.Template } end
 else
     local names = { "Wooden", "Stone", "Iron", "Golden", "Diamond", "Strawberry", "Cactus", "Lightning", "Candy", "Rainbow", "Crystal",
         "Demon", "Hacker", "Ufo", "Secret", "Cool", "Galaxy", "Celestial", "Sci Fi", "Enchanted", "Haunted" }
     local prices = { 0, 80, 800, 2e4, 1.6e5, 1.2e6, 6e6, 4e7, 4e8, 2.8e9, 2e10, 1.2e11, 1.2e12, 1.2e13, 8e13, 6e14, 4e15, 2e16, 7.5e16, 2e17, 1e18 }
-    for i, n in ipairs(names) do PICKAXES[i] = { name = n .. " Pickaxe", price = prices[i] } end
+    for i, n in ipairs(names) do PICKAXES[i] = { name = n .. " Pickaxe", price = prices[i], template = i .. ": " .. n .. " Pickaxe" } end
 end
 
 TRAILS = {}
 if TrailsCfg and type(TrailsCfg.Trails) == "table" then
-    for _, t in ipairs(TrailsCfg.Trails) do table.insert(TRAILS, { id = t.Id, name = t.Name, mult = t.Multiplier or 1, price = t.Price or 0 }) end
+    for _, t in ipairs(TrailsCfg.Trails) do table.insert(TRAILS, { id = t.Id, name = t.Name, mult = t.Multiplier or 1, price = t.Price or 0, icon = t.Icon }) end
 else
     local list = { { "White", 2, 500 }, { "Blue", 4, 7500 }, { "Green", 8, 1e5 }, { "Purple", 16, 1.25e6 }, { "Red", 40, 1.75e7 },
         { "Golden", 100, 2.5e8 }, { "Rainbow", 250, 3.5e9 }, { "Galactic", 600, 4.5e10 }, { "Secret", 1500, 6e11 },
@@ -149,6 +149,9 @@ local settings = {
     autoSell = false,    -- sell Backpack animals that make less than sellBelow $/s
     sellBelow = 0,
     autoIndex = false,   -- claim Index rewards when they are ready
+    minSteal = 0,        -- only steal animals making at least this much $/s (0 = always take the best)
+    winW = 820, winH = 520, -- window size (drag the edges or the corner)
+    uiScale = 100,       -- whole window, in %
     lang = nil,          -- "th" / "en" / "id" (first run: follows the Roblox language)
     tab = 1,
 }
@@ -219,7 +222,7 @@ local function zoneList()
     for i, z in ipairs(ZonesConfig and type(ZonesConfig.Zones) == "table" and ZonesConfig.Zones or {}) do
         if type(z) == "table" and z.Id then
             local d = ZoneDisplay and ZoneDisplay[z.Id]
-            table.insert(out, { id = z.Id, index = i, name = (d and d.Name) or z.Id, power = tonumber(z.RequiredPower) })
+            table.insert(out, { id = z.Id, index = i, name = (d and d.Name) or z.Id, power = tonumber(z.RequiredPower), icon = z.Icon })
         end
     end
     if #out == 0 then -- config not readable: fall back to the zone builds in the map
@@ -296,6 +299,17 @@ local STR = {
 
     -- home
     ["Status"] = { "สถานะ", "Status" },
+    ["Hi, %s"] = { "สวัสดี %s", "Halo, %s" },
+    ["Only steal from"] = { "ขโมยเฉพาะตัวที่ได้ตั้งแต่", "Curi hanya mulai dari" },
+    ["$/s or more. 0 = always take the best. Type like 25K, 1M"] = { "$/s ขึ้นไป ใส่ 0 = เอาตัวที่ดีสุดทุกรอบ พิมพ์ได้แบบ 25K, 1M", "$/s ke atas. 0 = selalu ambil yang terbaik. Tulis 25K, 1M" },
+    ["Best was %s, under %s: breaking more eggs"] = { "ตัวดีสุดได้ %s ต่ำกว่า %s ตีไข่ต่อ", "Terbaik %s, di bawah %s: lanjut pecahkan telur" },
+    ["Window"] = { "หน้าต่าง", "Jendela" },
+    ["Make the window bigger or smaller"] = { "ขยายหรือย่อหน้าต่าง", "Besarkan atau kecilkan jendela" },
+    ["Size"] = { "ขนาด", "Ukuran" },
+    ["Also drag the bottom-right corner to stretch it"] = { "ลากมุมขวาล่างเพื่อยืดหรือหดได้ด้วย", "Bisa juga tarik sudut kanan bawah" },
+    ["Reset size"] = { "คืนขนาดเดิม", "Ukuran awal" },
+    ["Back to 820 × 520 at 100%"] = { "กลับไปขนาด 820 × 520 ที่ 100%", "Kembali ke 820 × 520 di 100%" },
+    ["Reset"] = { "รีเซ็ต", "Reset" },
     ["What the bot is doing right now"] = { "ตอนนี้บอทกำลังทำอะไรอยู่", "Yang sedang dikerjakan bot sekarang" },
     ["Doing"] = { "กำลังทำ", "Sedang" }, ["Money"] = { "เงิน", "Uang" },
     ["Stolen this session"] = { "ขโมยได้รอบนี้", "Dicuri sesi ini" },
@@ -464,13 +478,14 @@ end
 local onLanguage = {} -- extra refreshers (zone list, tab title)
 
 ---------------------------------------------------------------- theme (LAIKA tokens) + motion
+-- deep purple-black surfaces, violet primary, rose highlight (matches the cat)
 local T = {
-    bg = Color3.fromHex("0c0d0f"), side = Color3.fromHex("101113"), card = Color3.fromHex("16171a"),
-    raised = Color3.fromHex("1d1f22"), raised2 = Color3.fromHex("24262a"), text = Color3.fromHex("ececef"),
-    muted = Color3.fromHex("8a8d94"), faint = Color3.fromHex("5d6068"), accent = Color3.fromHex("8b8cff"),
-    accentT = Color3.fromHex("c7c8ff"), green = Color3.fromHex("22c55e"), red = Color3.fromHex("ef4444"),
+    bg = Color3.fromHex("0e0d18"), side = Color3.fromHex("12111f"), card = Color3.fromHex("1a1828"),
+    raised = Color3.fromHex("221f33"), raised2 = Color3.fromHex("2b2840"), text = Color3.fromHex("eeecf6"),
+    muted = Color3.fromHex("9b97b0"), faint = Color3.fromHex("625e78"), accent = Color3.fromHex("8b5cf6"),
+    accentT = Color3.fromHex("c4b5fd"), green = Color3.fromHex("22c55e"), red = Color3.fromHex("ef4444"),
     amber = Color3.fromHex("f59e0b"), sky = Color3.fromHex("38bdf8"), violet = Color3.fromHex("a78bfa"),
-    pink = Color3.fromHex("f472b6"), switchOff = Color3.fromHex("303238"),
+    pink = Color3.fromHex("f472b6"), rose = Color3.fromHex("f43f5e"), switchOff = Color3.fromHex("34304a"),
 }
 local LINE, LINE2 = 0.94, 0.89
 local FONT      = Font.new("rbxasset://fonts/families/Nunito.json", Enum.FontWeight.Bold)
@@ -595,7 +610,8 @@ if not pcall(function() gui.Parent = parentGui end) then gui.Parent = LocalPlaye
 
 local SIDEBAR = 184
 local window = new("Frame", {
-    Name = "Window", Parent = gui, Size = UDim2.fromOffset(820, 520), Position = UDim2.new(0.5, -410, 0.5, -260),
+    Name = "Window", Parent = gui, Size = UDim2.fromOffset(math.max(600, tonumber(settings.winW) or 820), math.max(380, tonumber(settings.winH) or 520)),
+    Position = UDim2.new(0.5, -(tonumber(settings.winW) or 820) / 2, 0.5, -(tonumber(settings.winH) or 520) / 2),
     BackgroundColor3 = T.bg, BorderSizePixel = 0, ClipsDescendants = true,
 }, { corner(14), line(LINE2) })
 
@@ -610,7 +626,68 @@ pcall(function()
     if getAsset and isfile and isfile(file) then catImage = getAsset(file) end
 end)
 
-local setStatus, selectTab, tab, toast
+-- pictures the game already uses (rbxassetid): its HUD buttons and shop cards
+local IMG = {
+    cat = catImage,
+    eggs = "rbxassetid://82591144814984", shop = "rbxassetid://74059337340117", pets = "rbxassetid://98555742362660",
+    speed = "rbxassetid://140522991306842", index = "rbxassetid://105451413936050", sell = "rbxassetid://85919207166344",
+    cash = "rbxassetid://100451594632335", swing = "rbxassetid://99777146015256", tread = "rbxassetid://88793025820108",
+    walk = "rbxassetid://129975899954235", boost = "rbxassetid://79732991925872", zone = "rbxassetid://84488003116697",
+    gear = "rbxasset://textures/ui/Settings/MenuBarIcons/GameSettingsTab.png",
+}
+
+-- a picture with a text glyph under it; the glyph shows when the picture is empty or does not load
+local function icon(parent, image, size, glyph, tint, props)
+    local holder = new("Frame", { Parent = parent, BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size) })
+    for k, v in pairs(props or {}) do holder[k] = v end
+    local g = label(holder, glyph or "", math.floor(size * 0.6), tint or T.muted, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center }, true)
+    local img = new("ImageLabel", { Parent = holder, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Image = image or "", ScaleType = Enum.ScaleType.Fit })
+    local function check()
+        local ok, loaded = pcall(function() return img.IsLoaded end)
+        g.Visible = img.Image == "" or (ok and not loaded)
+    end
+    g.Visible = img.Image == ""
+    img:GetPropertyChangedSignal("Image"):Connect(function() g.Visible = img.Image == ""; task.delay(3, check) end)
+    task.delay(3, check)
+    return holder, img, g
+end
+
+-- the game's animal / egg renders (AnimalRenders: { Normal = { [name] = id }, Gold, Diamond, Eggs }), data only
+local animalImage, eggImage, pickaxeIcon
+do
+    local Renders = tryRequire(Shared:FindFirstChild("AnimalRenders"))
+    local index = {}
+    local function key(s) return (string.gsub(string.lower(s), "[%s_%-]", "")) end
+    local function find(group, name)
+        if type(name) ~= "string" or not (Renders and type(Renders[group]) == "table") then return "" end
+        local idx = index[group]
+        if not idx then
+            idx = {}
+            for k, v in pairs(Renders[group]) do if type(k) == "string" then idx[key(k)] = v end end
+            index[group] = idx
+        end
+        local id = idx[key(name)]
+        return id and ("rbxassetid://" .. tostring(id)) or ""
+    end
+    animalImage = function(name, variant)
+        local img = (type(variant) == "string" and variant ~= "Normal") and find(variant, name) or ""
+        return img ~= "" and img or find("Normal", name)
+    end
+    eggImage = function(eggType) return find("Eggs", eggType) end
+    -- the shop's pickaxe picture: the TextureId of its tool template in ReplicatedStorage.Pickaxes
+    pickaxeIcon = function(tier)
+        local folder = ReplicatedStorage:FindFirstChild("Pickaxes")
+        local p = PICKAXES[tier]
+        if not (folder and p) then return "" end
+        local t = p.template and folder:FindFirstChild(p.template)
+        if not t then
+            for _, c in ipairs(folder:GetChildren()) do if c.Name:find(p.name, 1, true) then t = c break end end
+        end
+        return (t and t:IsA("Tool")) and t.TextureId or ""
+    end
+end
+
+local setStatus, selectTab, tab, toast, applyScale
 local titleText, subtitleText
 do
     ---------------- sidebar
@@ -647,6 +724,13 @@ do
 
     ---------------- main area
     local main = new("Frame", { Parent = window, BackgroundTransparency = 1, Position = UDim2.fromOffset(SIDEBAR, 0), Size = UDim2.new(1, -SIDEBAR, 1, 0) })
+    new("Frame", { -- glow
+        Parent = main, BackgroundColor3 = T.accent, BackgroundTransparency = 0.5, BorderSizePixel = 0, ZIndex = 0,
+        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.75, 0, 0, 0), Size = UDim2.fromOffset(520, 260),
+    }, {
+        corner(130),
+        new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 1) }), Rotation = 90 }),
+    })
     local toolbar = new("Frame", { Parent = main, Size = UDim2.new(1, 0, 0, 58), BackgroundTransparency = 1 }, {
         new("Frame", { Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = WHITE, BackgroundTransparency = LINE, BorderSizePixel = 0 }),
     })
@@ -703,7 +787,72 @@ do
         end)
     end
 
-    ---------------- pages: two columns
+    ---------------- resize: drag the right edge, the bottom edge or the corner grip
+    do
+        local MIN_W, MIN_H = 600, 380
+        local function handle(props, glyph)
+            local h = new("TextButton", { Parent = window, AutoButtonColor = false, Text = "", BackgroundTransparency = 1, ZIndex = 20 })
+            for k, v in pairs(props) do h[k] = v end
+            return h
+        end
+        local right = handle({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 40), Size = UDim2.new(0, 8, 1, -60) })
+        local bottom = handle({ AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, SIDEBAR, 1, 0), Size = UDim2.new(1, -SIDEBAR - 20, 0, 8) })
+        local grip = handle({ AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -4, 1, -4), Size = UDim2.fromOffset(18, 18) })
+        for i = 1, 3 do -- three little dots in a diagonal: "you can pull here"
+            new("Frame", {
+                Parent = grip, BackgroundColor3 = T.faint, BorderSizePixel = 0, Size = UDim2.fromOffset(3, 3), ZIndex = 21,
+                Position = UDim2.fromOffset(15 - i * 5, 12), AnchorPoint = Vector2.new(0, 0),
+            }, { corner(2) })
+            if i > 1 then
+                new("Frame", { Parent = grip, BackgroundColor3 = T.faint, BorderSizePixel = 0, Size = UDim2.fromOffset(3, 3), ZIndex = 21,
+                    Position = UDim2.fromOffset(12, 15 - i * 5) }, { corner(2) })
+            end
+        end
+        grip.MouseEnter:Connect(function() for _, d in ipairs(grip:GetChildren()) do if d:IsA("Frame") then tween(d, { BackgroundColor3 = T.accentT }, MOTION.hover) end end end)
+        grip.MouseLeave:Connect(function() for _, d in ipairs(grip:GetChildren()) do if d:IsA("Frame") then tween(d, { BackgroundColor3 = T.faint }, MOTION.hover) end end end)
+
+        local mode, startSize, startInput
+        local function begin(which)
+            return function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    mode, startSize, startInput = which, window.AbsoluteSize, input.Position
+                end
+            end
+        end
+        right.InputBegan:Connect(begin("x"))
+        bottom.InputBegan:Connect(begin("y"))
+        grip.InputBegan:Connect(begin("xy"))
+        UserInputService.InputChanged:Connect(function(input)
+            if mode and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local scale = math.max(0.3, (tonumber(settings.uiScale) or 100) / 100)
+                local d = (input.Position - startInput) / scale -- the window is scaled: mouse pixels are bigger or smaller
+                local base = startSize / scale
+                local w = mode:find("x") and math.max(MIN_W, base.X + d.X) or base.X
+                local h = mode:find("y") and math.max(MIN_H, base.Y + d.Y) or base.Y
+                window.Size = UDim2.fromOffset(math.floor(w), math.floor(h))
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(input)
+            if mode and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+                mode = nil
+                settings.winW, settings.winH = window.Size.X.Offset, window.Size.Y.Offset
+                save()
+            end
+        end)
+    end
+
+    ---------------- pages: two columns, one column when the window is narrow
+    local pages = {}
+    local function layout(pg)
+        if main.AbsoluteSize.X / math.max(0.3, (tonumber(settings.uiScale) or 100) / 100) < 560 then
+            pg.left.Size, pg.right.Size = UDim2.new(1, 0, 0, 0), UDim2.new(1, 0, 0, 0)
+            pg.right.Position = UDim2.new(0, 0, 0, pg.left.AbsoluteSize.Y / math.max(0.3, (tonumber(settings.uiScale) or 100) / 100) + 14)
+        else
+            pg.left.Size, pg.right.Size = UDim2.new(0.5, -7, 0, 0), UDim2.new(0.5, -7, 0, 0)
+            pg.right.Position = UDim2.new(0.5, 7, 0, 0)
+        end
+    end
+    main:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() for _, pg in ipairs(pages) do layout(pg) end end)
     local function makePage()
         local page = new("ScrollingFrame", {
             Parent = main, Visible = false, BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -714,6 +863,10 @@ do
         local cols = new("Frame", { Parent = page, BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -36, 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
         local left = new("Frame", { Parent = cols, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(0.5, -7, 0, 0) }, { vlist(14) })
         local right = new("Frame", { Parent = cols, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(0.5, -7, 0, 0), Position = UDim2.new(0.5, 7, 0, 0) }, { vlist(14) })
+        local pg = { left = left, right = right }
+        table.insert(pages, pg)
+        left:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() layout(pg) end)
+        layout(pg)
         return page, left, right
     end
 
@@ -731,7 +884,8 @@ do
                 tween(t.page, { Position = UDim2.fromOffset(0, 58) }, MOTION.enter)
             end
             t.label.TextColor3 = on and T.text or T.muted
-            t.icon.TextColor3 = on and t.tint or T.faint
+            t.glyph.TextColor3 = on and t.tint or T.faint
+            tween(t.img, { ImageTransparency = on and 0 or 0.45 }, MOTION.hover)
             tween(t.button, { BackgroundTransparency = on and 0 or 1 }, MOTION.hover)
             tween(t.bar, { Size = UDim2.fromOffset(3, on and 20 or 0) }, MOTION.pop)
             tween(t.iconScale, { Scale = on and 1.15 or 1 }, MOTION.pop)
@@ -742,7 +896,7 @@ do
         tween(titleText, { TextTransparency = 0 })
         tween(subtitleText, { TextTransparency = 0 })
     end
-    local function addTab(id, section, glyph, tint, name, subtitle)
+    local function addTab(id, section, image, glyph, tint, name, subtitle)
         if section then
             label(navList, section, 10, T.faint, FONT_BOLD, { LayoutOrder = #tabs * 10 + 1, Size = UDim2.new(1, 0, 0, 28), TextYAlignment = Enum.TextYAlignment.Bottom })
         end
@@ -754,25 +908,24 @@ do
             Parent = b, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(3, 0),
             BackgroundColor3 = tint, BorderSizePixel = 0,
         }, { corner(2) })
-        local icon = label(b, glyph, 16, T.faint, FONT_BOLD, {
-            Position = UDim2.fromOffset(10, 0), Size = UDim2.fromOffset(24, 40), TextXAlignment = Enum.TextXAlignment.Center,
-        }, true)
-        local iconScale = new("UIScale", { Parent = icon })
+        local holder, img, g = icon(b, image, 24, glyph, T.faint, { Position = UDim2.fromOffset(10, 8) })
+        img.ImageTransparency = 0.45
+        local iconScale = new("UIScale", { Parent = holder })
         local l = label(b, name, 14, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(42, 0), Size = UDim2.new(1, -46, 1, 0) })
         local page, left, right = makePage()
-        table.insert(tabs, { button = b, bar = bar, label = l, icon = icon, iconScale = iconScale, tint = tint, page = page, name = name, subtitle = subtitle })
+        table.insert(tabs, { button = b, bar = bar, label = l, img = img, glyph = g, iconScale = iconScale, tint = tint, page = page, name = name, subtitle = subtitle })
         local index = #tabs
         b.MouseEnter:Connect(function() if settings.tab ~= index then tween(l, { TextColor3 = T.text }, MOTION.hover) end end)
         b.MouseLeave:Connect(function() if settings.tab ~= index then tween(l, { TextColor3 = T.muted }, MOTION.hover) end end)
         b.MouseButton1Click:Connect(function() selectTab(index) end)
         tab[id] = { L = left, R = right, index = index }
     end
-    addTab("home",  "General",    "⌂", T.accent, "Home", "What the bot is doing, your money and stats")
-    addTab("farm",  "Automation", "◆", T.green,  "Egg Farm", "Pick a zone: the bot breaks eggs, steals the best animal and runs back")
-    addTab("tread", nil,          "▲", T.sky,    "Treadmill", "Run on your own treadmill to get faster")
-    addTab("shop",  nil,          "$", T.amber,  "Shop", "Buys and upgrades on its own when you can afford it")
-    addTab("pets",  nil,          "♣", T.pink,   "Pets", "Best animals in the pen, sell the weak ones, claim the Index")
-    addTab("set",   "App",        "≡", T.violet, "Settings", "Language, walk speed and other options")
+    addTab("home",  "General",    IMG.cat,   "⌂", T.accent, "Home", "What the bot is doing, your money and stats")
+    addTab("farm",  "Automation", IMG.eggs,  "◆", T.green,  "Egg Farm", "Pick a zone: the bot breaks eggs, steals the best animal and runs back")
+    addTab("tread", nil,          IMG.speed, "▲", T.sky,    "Treadmill", "Run on your own treadmill to get faster")
+    addTab("shop",  nil,          IMG.shop,  "$", T.amber,  "Shop", "Buys and upgrades on its own when you can afford it")
+    addTab("pets",  nil,          IMG.pets,  "♣", T.pink,   "Pets", "Best animals in the pen, sell the weak ones, claim the Index")
+    addTab("set",   "App",        IMG.gear,  "≡", T.violet, "Settings", "Language, walk speed and other options")
     selectTab(math.clamp(tonumber(settings.tab) or 1, 1, #tabs))
 
     ---------------- toasts: small cards that slide in at the top right and fade away
@@ -781,15 +934,16 @@ do
         Size = UDim2.fromOffset(280, 400),
     }, { new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Right }) })
     local toastN = 0
-    toast = function(text, color)
+    toast = function(text, color, image)
+        image = (image and image ~= "") and image or catImage
         toastN += 1
         local holder = new("Frame", { Parent = toastHolder, LayoutOrder = -toastN, BackgroundTransparency = 1, Size = UDim2.fromOffset(280, 44), ClipsDescendants = true })
         local c = new("Frame", {
             Parent = holder, BackgroundColor3 = T.card, BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), Position = UDim2.fromOffset(300, 0),
         }, { corner(12), line(LINE2) })
         new("Frame", { Parent = c, BackgroundColor3 = color or T.accent, BorderSizePixel = 0, Size = UDim2.new(0, 4, 1, -16), Position = UDim2.fromOffset(10, 8) }, { corner(2) })
-        new("ImageLabel", { Parent = c, BackgroundTransparency = 1, Image = catImage, Size = UDim2.fromOffset(28, 28), Position = UDim2.fromOffset(22, 8), ScaleType = Enum.ScaleType.Fit, Visible = catImage ~= "" })
-        label(c, text, 12, T.text, FONT_SEMI, { Position = UDim2.fromOffset(catImage ~= "" and 58 or 24, 0), Size = UDim2.new(1, -70, 1, 0), TextWrapped = true }, true)
+        new("ImageLabel", { Parent = c, BackgroundTransparency = 1, Image = image, Size = UDim2.fromOffset(28, 28), Position = UDim2.fromOffset(22, 8), ScaleType = Enum.ScaleType.Fit, Visible = image ~= "" })
+        label(c, text, 12, T.text, FONT_SEMI, { Position = UDim2.fromOffset(image ~= "" and 58 or 24, 0), Size = UDim2.new(1, -70, 1, 0), TextWrapped = true }, true)
         tween(c, { Position = UDim2.fromOffset(0, 0) }, MOTION.pop)
         task.delay(3.5, function()
             tween(c, { Position = UDim2.fromOffset(300, 0) }, MOTION.leave)
@@ -800,6 +954,9 @@ do
 
     ---------------- hide into a cat bubble (red dot or RightShift), tap the bubble to come back
     local windowScale = new("UIScale", { Parent = window })
+    local function baseScale() return math.clamp((tonumber(settings.uiScale) or 100) / 100, 0.5, 1.5) end
+    windowScale.Scale = baseScale()
+    applyScale = function() tween(windowScale, { Scale = baseScale() }, MOTION.enter) end
     local bubble = new("TextButton", {
         Parent = gui, AutoButtonColor = false, Text = "", Visible = false, Size = UDim2.fromOffset(58, 58),
         Position = UDim2.new(0, 24, 0.5, -29), BackgroundColor3 = T.card, BorderSizePixel = 0,
@@ -814,7 +971,7 @@ do
         hideToken += 1
         local mine = hideToken
         if hidden then
-            tween(windowScale, { Scale = 0.94 }, MOTION.leave)
+            tween(windowScale, { Scale = baseScale() * 0.94 }, MOTION.leave)
             task.delay(MOTION.leave.Time, function()
                 if mine ~= hideToken then return end
                 window.Visible = false
@@ -825,8 +982,8 @@ do
         else
             bubble.Visible = false
             window.Visible = true
-            windowScale.Scale = 0.94
-            tween(windowScale, { Scale = 1 }, MOTION.pop)
+            windowScale.Scale = baseScale() * 0.94
+            tween(windowScale, { Scale = baseScale() }, MOTION.pop)
         end
     end
     btnHide.MouseButton1Click:Connect(function() setHidden(true) end)
@@ -861,19 +1018,26 @@ end
 -- row counters per container, kept in Lua: the executor's UI container refuses attribute access
 local rowCount = setmetatable({}, { __mode = "k" })
 
--- card: tinted glyph tile + title + subtitle. returns the card and its header (put a switch there)
+-- card: tinted tile (a game picture, or a glyph) + title + subtitle. returns the card and its header
 local function card(parent, order, title, sub, glyph, tint)
     tint = tint or T.accent
+    local stroke = line()
     local c = new("Frame", {
         Parent = parent, LayoutOrder = order, BackgroundColor3 = T.card, BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-    }, { corner(14), line(), vlist(0) })
+    }, { corner(14), stroke, vlist(0) })
+    c.MouseEnter:Connect(function() tween(stroke, { Color = tint, Transparency = 0.6 }, MOTION.hover) end)
+    c.MouseLeave:Connect(function() tween(stroke, { Color = WHITE, Transparency = LINE }, MOTION.hover) end)
     local head = new("Frame", { Parent = c, LayoutOrder = 0, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 64) }, { pad(0, 16, 0, 16) })
     local tile = new("Frame", {
         Parent = head, Size = UDim2.fromOffset(40, 40), Position = UDim2.new(0, 0, 0.5, -20),
         BackgroundColor3 = tint, BackgroundTransparency = 0.82, BorderSizePixel = 0,
     }, { corner(12), new("UIStroke", { Color = tint, Transparency = 0.55, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }) })
-    label(tile, glyph or "•", 18, tint, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center }, true)
+    if type(glyph) == "string" and glyph:find("^rbx") then
+        icon(tile, glyph, 30, "•", tint, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+    else
+        label(tile, glyph or "•", 18, tint, FONT_BOLD, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center }, true)
+    end
     label(head, title, 15, T.text, FONT_BOLD, { Position = UDim2.fromOffset(52, 12), Size = UDim2.new(1, -110, 0, 20) })
     label(head, sub or "", 11, T.muted, FONT, { Position = UDim2.fromOffset(52, 33), Size = UDim2.new(1, -110, 0, 14) })
     rowCount[c] = 0
@@ -881,34 +1045,41 @@ local function card(parent, order, title, sub, glyph, tint)
 end
 
 -- a row: title/sub on the left, a widget on the right. returns the row and its sub label
-local function row(parent, title, sub, height)
+local function row(parent, title, sub, height, image)
     local n = (rowCount[parent] or 0) + 1
     rowCount[parent] = n
-    local r = new("Frame", { Parent = parent, LayoutOrder = n, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, height or (sub and 48 or 38)) }, { pad(0, 16, 0, 16) })
+    local h = height or (sub and 48 or 38)
+    local r = new("Frame", { Parent = parent, LayoutOrder = n, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, h) }, { pad(0, 16, 0, 16) })
     new("Frame", { Parent = r, Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = WHITE, BackgroundTransparency = LINE, BorderSizePixel = 0 })
-    if title then label(r, title, 13, T.text, FONT_SEMI, { Position = UDim2.fromOffset(0, sub and 8 or 0), Size = UDim2.new(1, -110, 0, sub and 18 or (height or 38)) }) end
-    local subLabel = sub and label(r, sub, 10, T.muted, FONT, { Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, -110, 0, 14) })
-    return r, subLabel
+    local x, img = 0, nil
+    if image then
+        local _, pic = icon(r, image, 26, "•", T.faint, { Position = UDim2.new(0, 0, 0.5, -13) })
+        img, x = pic, 36
+    end
+    if title then label(r, title, 13, T.text, FONT_SEMI, { Position = UDim2.fromOffset(x, sub and 8 or 0), Size = UDim2.new(1, -110 - x, 0, sub and 18 or h) }) end
+    local subLabel = sub and label(r, sub, 10, T.muted, FONT, { Position = UDim2.fromOffset(x, 26), Size = UDim2.new(1, -110 - x, 0, 14) })
+    return r, subLabel, img
 end
 
-local function valueRow(parent, title, color)
-    local r = row(parent, title)
+-- returns the value label and the row picture (when `image` is given)
+local function valueRow(parent, title, color, image)
+    local r, _, img = row(parent, title, nil, image and 44 or nil, image)
     return label(r, "—", 12, color or T.muted, FONT_SEMI, {
-        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0.62, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Right,
-    }, true)
+        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0.6, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Right,
+    }, true), img
 end
 
-local function switchRow(parent, title, sub, key, onChange)
-    local r, subLabel = row(parent, title, sub)
+local function switchRow(parent, title, sub, key, onChange, image)
+    local r, subLabel, img = row(parent, title, sub, nil, image)
     local _, refresh = switch(r, function() return settings[key] end, function()
         settings[key] = not settings[key]; save()
         if onChange then onChange() end
     end)
-    return subLabel, refresh
+    return subLabel, refresh, img
 end
 
 -- [ − 20 + ] box on the right of a row; the number can also be typed
-local function stepperRow(parent, title, sub, key, min, max, step, fmt)
+local function stepperRow(parent, title, sub, key, min, max, step, fmt, onChange)
     local r = row(parent, title, sub)
     local box = new("Frame", { Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0 }, { corner(8), line(LINE2) })
     rightAnchor(box, 96, 28)
@@ -931,6 +1102,7 @@ local function stepperRow(parent, title, sub, key, min, max, step, fmt)
     local function apply(v)
         settings[key] = math.clamp(math.floor(v / step + 0.5) * step, min, max)
         save(); refresh()
+        if onChange then onChange() end
         num.TextColor3 = T.accentT
         tween(num, { TextColor3 = T.text })
     end
@@ -938,6 +1110,47 @@ local function stepperRow(parent, title, sub, key, min, max, step, fmt)
     plus.MouseButton1Click:Connect(function() apply(settings[key] + step) end)
     num.FocusLost:Connect(function() apply(tonumber(num.Text:match("[%d%.]+") or "") or settings[key]) end)
     refresh()
+end
+
+-- a money box on the right of a row: type 500, 25K, 1.5M; it shows "$1.5M/s"
+local amountRow
+do
+local AMOUNT_UNITS = { { 1e18, "Qi" }, { 1e15, "Qa" }, { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }
+local function readAmount(text)
+    text = tostring(text):gsub(",", ""):gsub("%$", ""):gsub("/s", "")
+    local num, suf = text:match("^%s*([%d%.]+)%s*(%a*)")
+    if not num then return nil end
+    local mult = 1
+    for _, u in ipairs(AMOUNT_UNITS) do if string.lower(u[2]) == string.lower(suf) then mult = u[1] end end
+    return (tonumber(num) or 0) * mult
+end
+local function showAmount(n)
+    n = tonumber(n) or 0
+    for _, u in ipairs(AMOUNT_UNITS) do
+        if n >= u[1] then return "$" .. (string.format("%.2f", n / u[1]):gsub("0+$", ""):gsub("%.$", "")) .. u[2] .. "/s" end
+    end
+    return "$" .. math.floor(n) .. "/s"
+end
+amountRow = function(parent, title, sub, key, image)
+    local r = row(parent, title, sub, nil, image)
+    local box = new("TextBox", {
+        Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false, PlaceholderText = "0",
+        PlaceholderColor3 = T.faint, FontFace = FONT_BOLD, TextSize = 12, TextColor3 = T.text, Text = "",
+    }, { corner(8), line(LINE2) })
+    rightAnchor(box, 100, 28)
+    local function show() box.Text = (tonumber(settings[key]) or 0) > 0 and showAmount(settings[key]) or "" end
+    box.Focused:Connect(function() tween(box, { BackgroundColor3 = T.raised }, MOTION.hover) end)
+    box.FocusLost:Connect(function()
+        tween(box, { BackgroundColor3 = T.bg }, MOTION.hover)
+        local v = readAmount(box.Text)
+        if v then settings[key] = v; save() elseif box.Text == "" then settings[key] = 0; save() end
+        show()
+        box.TextColor3 = T.accentT
+        tween(box, { TextColor3 = T.text })
+    end)
+    show()
+    return box
+end
 end
 
 -- a full-width button row: title/sub on the left, the button on the right. returns the button
@@ -961,7 +1174,7 @@ end
 local actions = {}
 
 ---------------- egg farm tab: the Auto Egg card
-local farmCard, farmHead = card(tab.farm.L, 1, "Auto Egg", "Run to the egg, break it, bring the animal home", "◆", T.green)
+local farmCard, farmHead = card(tab.farm.L, 1, "Auto Egg", "Run to the egg, break it, bring the animal home", IMG.eggs, T.green)
 local refreshFarm
 local onFarmChanged = function() end -- set by the zone list
 local stopTreadmill = function() end -- set by the treadmill card: farming and the treadmill are one or the other
@@ -973,19 +1186,23 @@ do
     refreshFarm = r
 end
 local stepText   = valueRow(farmCard, "Doing", T.accentT)
-local targetText = valueRow(farmCard, "Target")
+local farmPic = {} -- pictures next to Target / Best animal
+local targetText
+targetText, farmPic.target = valueRow(farmCard, "Target", nil, IMG.eggs)
 local roundText  = valueRow(farmCard, "This round", T.amber)
-local bestText   = valueRow(farmCard, "Best animal", T.green)
+local bestText
+bestText, farmPic.best = valueRow(farmCard, "Best animal", T.green, IMG.pets)
 local placedText = valueRow(farmCard, "Stolen this session", T.green)
 placedText.Text = "0"
 
 do -- round options (farm tab) and the settings tab
-    local roundCard = card(tab.farm.L, 2, "Round", "How long to break eggs and where to go after a steal", "◷", T.amber)
+    local roundCard = card(tab.farm.L, 2, "Round", "How long to break eggs and where to go after a steal", IMG.swing, T.amber)
     stepperRow(roundCard, "Break eggs for", "Seconds, then steal the best $/s", "window", 0, 120, 5, "%ds")
+    amountRow(roundCard, "Only steal from", "$/s or more. 0 = always take the best. Type like 25K, 1M", "minSteal", IMG.cash)
     switchRow(roundCard, "Place in the pen", "Off: only run back over the red line", "placeInPen")
     stepperRow(roundCard, "Place after", "Animals in the bag before going to the pen", "carry", 1, 50, 1)
 
-    local langCard = card(tab.set.L, 1, "Language", "Pick the language for this window", "文", T.violet)
+    local langCard = card(tab.set.L, 1, "Language", "Pick the language for this window", "Aa", T.violet)
     local r = row(langCard, nil, nil, 52)
     local names, idx = {}, {}
     for i, l in ipairs(LANGS) do names[i] = l.name; idx[l.code] = i end
@@ -995,9 +1212,18 @@ do -- round options (farm tab) and the settings tab
     end)
     bar.Position = UDim2.fromOffset(0, 10)
 
-    local speedCard, speedHead = card(tab.set.L, 2, "Walk Speed", "Off: the bot runs at your normal game speed", "»", T.sky)
+    local speedCard, speedHead = card(tab.set.L, 2, "Walk Speed", "Off: the bot runs at your normal game speed", IMG.walk, T.sky)
     switch(speedHead, function() return settings.speedOn end, function() settings.speedOn = not settings.speedOn; save() end)
     stepperRow(speedCard, "Speed", "Roblox default is 16", "walkSpeed", 16, 500, 5)
+
+    local winCard = card(tab.set.L, 3, "Window", "Make the window bigger or smaller", IMG.cat, T.accent)
+    stepperRow(winCard, "Size", "Also drag the bottom-right corner to stretch it", "uiScale", 60, 140, 5, "%d%%", function() applyScale() end)
+    buttonRow(winCard, "Reset size", "Back to 820 × 520 at 100%", "Reset", T.accent, 84).MouseButton1Click:Connect(function()
+        settings.uiScale, settings.winW, settings.winH = 100, 820, 520
+        save()
+        tween(window, { Size = UDim2.fromOffset(820, 520) }, MOTION.enter)
+        applyScale()
+    end)
 
     local optCard = card(tab.set.R, 1, "Options", "Movement and staying online", "≡", T.violet)
     switchRow(optCard, "Walk around walls", "Off: run in a straight line", "pathfind")
@@ -1015,7 +1241,7 @@ end
 ---------------- egg farm tab: zone picker
 local renderZones -- forward
 do
-local zoneCard = card(tab.farm.R, 1, "Zones", "Tap a zone: run there, break an egg, bring the animal home", "◎", T.green)
+local zoneCard = card(tab.farm.R, 1, "Zones", "Tap a zone: run there, break an egg, bring the animal home", IMG.zone, T.green)
 local zoneText = valueRow(zoneCard, "Farming", T.accentT)
 local zoneScroll = new("ScrollingFrame", {
     Parent = zoneCard, LayoutOrder = 50, BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -1057,9 +1283,9 @@ function renderZones()
             zr = {
                 b = b,
                 stroke = new("UIStroke", { Parent = b, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = WHITE, Transparency = LINE, Thickness = 1 }),
-                num = label(b, tostring(z.index), 12, T.faint, FONT_BOLD, { Position = UDim2.fromOffset(12, 0), Size = UDim2.new(0, 20, 1, 0) }, true),
-                name = label(b, z.name, 13, T.text, FONT_SEMI, { Position = UDim2.fromOffset(36, 8), Size = UDim2.new(1, -130, 0, 18) }, true),
-                info = label(b, "", 10, T.muted, FONT, { Position = UDim2.fromOffset(36, 27), Size = UDim2.new(1, -130, 0, 14) }, true),
+                pic = select(2, icon(b, z.icon or IMG.zone, 34, tostring(z.index), T.faint, { Position = UDim2.fromOffset(10, 8) })),
+                name = label(b, z.name, 13, T.text, FONT_SEMI, { Position = UDim2.fromOffset(54, 8), Size = UDim2.new(1, -150, 0, 18) }, true),
+                info = label(b, "", 10, T.muted, FONT, { Position = UDim2.fromOffset(54, 27), Size = UDim2.new(1, -150, 0, 14) }, true),
                 tag = label(b, "", 11, T.muted, FONT_BOLD, {
                     AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 0), Size = UDim2.new(0, 90, 1, 0), TextXAlignment = Enum.TextXAlignment.Right,
                 }, true),
@@ -1072,7 +1298,8 @@ function renderZones()
         zr.stroke.Color = active and T.green or (picked and T.accent or WHITE)
         zr.stroke.Transparency = picked and 0 or LINE
         zr.stroke.Thickness = picked and 2 or 1
-        zr.info.Text = (n > 0 and L("%d eggs now", n) or L("no eggs right now")) .. (z.power and ("  ·  " .. L("power %s", compact(z.power))) or "")
+        zr.pic.ImageTransparency = (n > 0 or picked) and 0 or 0.4
+        zr.info.Text = "#" .. z.index .. "  ·  " .. (n > 0 and L("%d eggs now", n) or L("no eggs right now")) .. (z.power and ("  ·  " .. L("power %s", compact(z.power))) or "")
         zr.info.TextColor3 = n > 0 and T.green or T.muted
         zr.tag.Text = active and L("FARMING") or (picked and L("PICKED") or L("GO"))
         zr.tag.TextColor3 = active and T.green or (picked and T.accentT or T.muted)
@@ -1295,6 +1522,12 @@ end
 local function breakEgg(egg, deadline)
     local name = eggName(egg)
     targetText.Text = name
+    do -- the egg's own picture
+        local ok, et = pcall(egg.GetAttribute, egg, "EggType")
+        local pic = eggImage(ok and type(et) == "string" and et or name)
+        if pic == "" then pic = eggImage(name) end
+        farmPic.target.Image = pic ~= "" and pic or IMG.eggs
+    end
     stepText.Text = L("Running to %s", name)
     setStatus("Running to egg", true)
     local inRange = function(pos) return surfaceDistance(egg, pos) <= HIT_RANGE - 2.5 end
@@ -1910,6 +2143,7 @@ local round = { started = nil, spots = {} }
 local function resetRound()
     round = { started = nil, spots = {} }
     roundText.Text, bestText.Text = "—", "—"
+    farmPic.best.Image = IMG.pets
 end
 
 local function showRound()
@@ -1918,6 +2152,8 @@ local function showRound()
     roundText.Text = L("%d eggs · %ds left", #round.spots, math.ceil(left))
     local c = candidatesNear(round.spots)
     bestText.Text = c[1] and L("%s  %s  · %d hatched", c[1].name, shortCash(c[1].cash), #c) or L("waiting for a hatch")
+    local pic = c[1] and animalImage(c[1].name) or ""
+    farmPic.best.Image = pic ~= "" and pic or IMG.pets
 end
 
 -- live "Best animal": refreshed while a round runs, and straight away when a new animal hatches
@@ -1977,6 +2213,20 @@ local function finishRound()
                 warn(string.format("  board %s  dist=%.1f  %s", b:GetFullName(), (bp - pos).Magnitude, table.concat(texts, " | ")))
             end
         end
+    end
+    -- the money filter: nothing at or above the minimum this round -> steal nothing, break more eggs
+    local minCash = tonumber(settings.minSteal) or 0
+    if minCash > 0 then
+        local keep = {}
+        for _, a in ipairs(list) do if a.cash >= minCash then table.insert(keep, a) end end
+        if #keep == 0 then
+            print(string.format("[LAIKAHUB] best this round %s, under the minimum %s: not stealing", shortCash(list[1].cash), shortCash(minCash)))
+            stepText.Text = L("Best was %s, under %s: breaking more eggs", shortCash(list[1].cash), shortCash(minCash))
+            task.wait(1)
+            resetRound()
+            return
+        end
+        list = keep
     end
     -- the best one first; if someone else grabs it, try the next
     for _, a in ipairs(list) do
@@ -2126,7 +2376,7 @@ task.spawn(function()
 end)
 LocalPlayer.CharacterAdded:Connect(function() treadRunning = false end)
 
-local treadCard, treadHead = card(tab.tread.L, 1, "Treadmill", "Run on your own treadmill to get faster", "▲", T.sky)
+local treadCard, treadHead = card(tab.tread.L, 1, "Treadmill", "Run on your own treadmill to get faster", IMG.tread, T.sky)
 local treadText = valueRow(treadCard, "Doing", T.accentT)
 treadLevelText = valueRow(treadCard, "Your treadmill")
 local refreshTreadSwitch
@@ -2210,12 +2460,14 @@ end
 
 ---------------------------------------------------------------- auto buy / upgrade
 do -- own scope: the main chunk is close to Luau's 200-locals limit
-local buyCard = card(tab.shop.L, 1, "Auto Buy", "Buys and uses the best one as soon as the money is there", "$", T.amber)
+local buyCard = card(tab.shop.L, 1, "Auto Buy", "Buys and uses the best one as soon as the money is there", IMG.shop, T.amber)
 local cashText = valueRow(buyCard, "Money", T.green)
-local pickSub  = switchRow(buyCard, "Auto Pickaxe", "—", "autoPickaxe")
-local trailSub = switchRow(buyCard, "Auto Trail", "—", "autoTrail")
-local penSub   = switchRow(buyCard, "Auto Upgrade Pen", "—", "autoPen")
-local treadSub = switchRow(buyCard, "Auto Upgrade Treadmill", "—", "autoTreadmill")
+local shopPic = {}
+local pickSub, trailSub, penSub, treadSub
+pickSub, shopPic.skip, shopPic.pick   = switchRow(buyCard, "Auto Pickaxe", "—", "autoPickaxe", nil, IMG.swing)
+trailSub, shopPic.skip, shopPic.trail = switchRow(buyCard, "Auto Trail", "—", "autoTrail", nil, IMG.speed)
+penSub   = switchRow(buyCard, "Auto Upgrade Pen", "—", "autoPen", nil, IMG.pets)
+treadSub = switchRow(buyCard, "Auto Upgrade Treadmill", "—", "autoTreadmill", nil, IMG.tread)
 
 -- Pickaxe: buy the dearest tier we can afford above the best we own, then hold the best we own.
 -- If the shop refuses to skip tiers (nothing changes after two tries), buy them one by one instead.
@@ -2240,6 +2492,8 @@ local function pickaxeStep()
         if tier ~= top and canTry("pickaxeEquip", 3) then fire("PickaxeShopRequest", "Equip", top) end
     end
     local name = PICKAXES[tier] and PICKAXES[tier].name or ("Tier " .. tier)
+    local pic = pickaxeIcon(tier)
+    if pic ~= "" and shopPic.pick.Image ~= pic then shopPic.pick.Image = pic end
     return nextOne and L("%s  ·  next %s", name, money(nextOne.price)) or L("%s  ·  best one", name)
 end
 
@@ -2271,7 +2525,12 @@ local function trailStep()
         if best and worn ~= best.id and canTry("trailEquip", 3) then fire("TrailShopRequest", "Equip", best.id) end
     end
     local wornName = L("none")
-    for _, t in ipairs(TRAILS) do if t.id == worn then wornName = t.name .. " x" .. t.mult end end
+    for _, t in ipairs(TRAILS) do
+        if t.id == worn then
+            wornName = t.name .. " x" .. t.mult
+            if t.icon and shopPic.trail.Image ~= t.icon then shopPic.trail.Image = t.icon end
+        end
+    end
     return nextOne and L("%s  ·  next %s", wornName, money(nextOne.price)) or L("%s  ·  best one", wornName)
 end
 
@@ -2373,7 +2632,8 @@ local function bagAnimals()
     local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
     local out = {}
     for _, t in ipairs(bp and bp:GetChildren() or {}) do
-        if t:IsA("Tool") and CollectionService:HasTag(t, TOOL_TAG) and type(t:GetAttribute("AnimalName")) == "string" then
+        if t:IsA("Tool") and type(t:GetAttribute("AnimalName")) == "string" and t.Name ~= "Pickaxe"
+            and (CollectionService:HasTag(t, TOOL_TAG) or t:GetAttribute("WeightKg") ~= nil) then
             table.insert(out, t)
         end
     end
@@ -2419,34 +2679,75 @@ local function smartEquip()
     return swaps
 end
 
--- "25K" / "1.5m" / "$500" -> number
-local function parseAmount(text)
-    text = tostring(text):gsub(",", ""):gsub("%$", "")
-    local num, suf = text:match("^%s*([%d%.]+)%s*(%a*)")
-    if not num then return nil end
-    local mult = 1
-    for k, v in pairs(SUFFIX) do if string.lower(k) == string.lower(suf) then mult = v end end
-    return (tonumber(num) or 0) * mult
-end
-
--- sell Backpack animals under the threshold. returns how many, or nil + reason
-local function sellWeak()
+-- Sell Backpack animals under the threshold. returns how many were sold, or nil + reason.
+-- The server can turn a batch down, so it goes in passes: everything at once, then groups of 20, then one by
+-- one for whatever is still there; it stops when nothing under the limit is left or a pass sells nothing.
+-- verbose = print every animal with its $/s and what happened to it (the Sell button does that).
+local function sellWeak(verbose)
     local limit = tonumber(settings.sellBelow) or 0
     if limit <= 0 then return nil, L("Set a $/s first") end
-    local bag = bagAnimals()
-    local vals = cpsOf(bag)
-    local list = {}
-    for i, t in ipairs(bag) do
-        local v = vals[i] or 0
-        if v > 0 and v < limit then table.insert(list, t) end -- 0 = value unknown: never sold
-        if #list >= 200 then break end
-    end
-    if #list == 0 then return 0 end
     local remote = ReplicatedStorage:FindFirstChild("BackpackSellRemote")
     if not (remote and remote:IsA("RemoteFunction")) then warn("[LAIKAHUB] BackpackSellRemote missing") return nil, "remote missing" end
-    local ok, err = pcall(remote.InvokeServer, remote, list)
-    if not ok then warn("[LAIKAHUB] sell failed: " .. tostring(err)) return nil, tostring(err) end
-    return #list
+
+    -- an animal in your hand that is under the limit goes back to the bag first (the game does the same)
+    do
+        local c, hum = charParts()
+        local held = c and c:FindFirstChildOfClass("Tool")
+        if hum and held and CollectionService:HasTag(held, TOOL_TAG) then
+            local v = cpsOf({ held })[1] or 0
+            if v > 0 and v < limit then hum:UnequipTools() task.wait(0.2) end
+        end
+    end
+
+    local function under()
+        local bag = bagAnimals()
+        local vals = cpsOf(bag)
+        local list, kept = {}, {}
+        for i, t in ipairs(bag) do
+            local v = vals[i] or 0
+            if v > 0 and v < limit then table.insert(list, t) else table.insert(kept, { t, v }) end -- 0 = unknown: kept
+        end
+        return list, kept, vals, bag
+    end
+    local function sendBatch(batch)
+        local ok, res = pcall(remote.InvokeServer, remote, batch)
+        if not ok then warn("[LAIKAHUB] sell failed: " .. tostring(res)) end
+        task.wait(0.4)
+        local gone = 0
+        for _, t in ipairs(batch) do if not t:IsDescendantOf(LocalPlayer) then gone += 1 end end
+        if verbose then print(string.format("[LAIKAHUB] sell: sent %d, sold %d, server said %s", #batch, gone, tostring(res))) end
+        return gone
+    end
+
+    local sold, size = 0, 200
+    for _ = 1, 12 do
+        local list = under()
+        if #list == 0 then break end
+        local passSold = 0
+        for i = 1, #list, size do
+            local batch = {}
+            for j = i, math.min(i + size - 1, #list) do table.insert(batch, list[j]) end
+            passSold += sendBatch(batch)
+        end
+        sold += passSold
+        if passSold == 0 then
+            if size == 1 then break end
+            size = size > 20 and 20 or 1 -- the batch was turned down: smaller ones
+        end
+    end
+
+    if verbose then
+        local left, kept, vals, bag = under()
+        print(string.format("[LAIKAHUB] sell below %s: sold %d, %d under the limit still in the bag", shortCash(limit), sold, #left))
+        for i, t in ipairs(bag) do
+            local v = vals[i] or 0
+            print(string.format("   %-24s %-10s %s", tostring(t:GetAttribute("AnimalName")), shortCash(v),
+                v == 0 and "kept: $/s unknown" or (v < limit and "STILL HERE (server kept it)" or "kept: above the limit")))
+        end
+        if #left > 0 then warn("[LAIKAHUB] the server did not sell " .. #left .. " animal(s) under the limit") end
+        local _ = kept
+    end
+    return sold
 end
 
 -- index rewards
@@ -2475,11 +2776,11 @@ end
 
 ---------------- pets tab UI
 local ui = {} -- labels the loop below keeps up to date
-do local equipCard, equipHead = card(tab.pets.L, 1, "Equip Best", "Swaps in a better animal as soon as you get one", "★", T.pink)
+do local equipCard, equipHead = card(tab.pets.L, 1, "Equip Best", "Swaps in a better animal as soon as you get one", IMG.pets, T.pink)
 switch(equipHead, function() return settings.autoEquipBest end, function() settings.autoEquipBest = not settings.autoEquipBest; save() end)
 ui.penText  = valueRow(equipCard, "Pen", T.text)
-ui.weakText = valueRow(equipCard, "Weakest in pen", T.amber)
-ui.bestBag  = valueRow(equipCard, "Best in bag", T.green)
+ui.weakText, ui.weakPic = valueRow(equipCard, "Weakest in pen", T.amber, IMG.pets)
+ui.bestBag, ui.bestPic  = valueRow(equipCard, "Best in bag", T.green, IMG.pets)
 buttonRow(equipCard, "Equip Best now", "Fills the pen and swaps out weaker animals", "Equip", T.pink, 84).MouseButton1Click:Connect(function()
     task.spawn(function()
         local n = smartEquip()
@@ -2488,24 +2789,10 @@ buttonRow(equipCard, "Equip Best now", "Fills the pen and swaps out weaker anima
 end)
 end
 
-do local sellCard, sellHead = card(tab.pets.L, 2, "Auto Sell", "Sells animals in your bag that make less than this", "$", T.amber)
+do local sellCard, sellHead = card(tab.pets.L, 2, "Auto Sell", "Sells animals in your bag that make less than this", IMG.sell, T.amber)
 switch(sellHead, function() return settings.autoSell end, function() settings.autoSell = not settings.autoSell; save() end)
 do
-    local r = row(sellCard, "Sell below", "$/s per animal. Type like 500, 25K, 1.5M")
-    local box = new("TextBox", {
-        Parent = r, BackgroundColor3 = T.bg, BorderSizePixel = 0, ClearTextOnFocus = false, PlaceholderText = "25K",
-        PlaceholderColor3 = T.faint, FontFace = FONT_BOLD, TextSize = 12, TextColor3 = T.text, Text = "",
-    }, { corner(8), line(LINE2) })
-    rightAnchor(box, 96, 28)
-    local function show() box.Text = (tonumber(settings.sellBelow) or 0) > 0 and money(settings.sellBelow) .. "/s" or "" end
-    box.Focused:Connect(function() tween(box, { BackgroundColor3 = T.raised }, MOTION.hover) end)
-    box.FocusLost:Connect(function()
-        tween(box, { BackgroundColor3 = T.bg }, MOTION.hover)
-        local v = parseAmount(box.Text)
-        if v then settings.sellBelow = v; save() end
-        show()
-    end)
-    show()
+    amountRow(sellCard, "Sell below", "$/s per animal. Type like 500, 25K, 1.5M", "sellBelow")
 end
 do
     local r
@@ -2514,14 +2801,14 @@ do
     rightAnchor(b, 84, 28)
     b.MouseButton1Click:Connect(function()
         task.spawn(function()
-            local n, why = sellWeak()
-            toast(n and (n > 0 and L("Sold %d animal(s)", n) or L("Nothing to sell")) or tostring(why), T.amber)
+            local n, why = sellWeak(true)
+            toast(n and (n > 0 and L("Sold %d animal(s)", n) or L("Nothing to sell")) or tostring(why), T.amber, IMG.sell)
         end)
     end)
 end
 
 end
-do local indexCard, indexHead = card(tab.pets.R, 1, "Index", "Claims Index rewards as soon as they are ready", "▤", T.sky)
+do local indexCard, indexHead = card(tab.pets.R, 1, "Index", "Claims Index rewards as soon as they are ready", IMG.index, T.sky)
 switch(indexHead, function() return settings.autoIndex end, function() settings.autoIndex = not settings.autoIndex; save() end)
 ui.readyText = valueRow(indexCard, "Ready to claim", T.green)
 buttonRow(indexCard, "Claim now", nil, "Claim", T.sky, 84).MouseButton1Click:Connect(function()
@@ -2533,11 +2820,63 @@ end)
 end
 
 ---------------- home tab UI
-do local statusCard = card(tab.home.L, 1, "Status", "What the bot is doing right now", "⌂", T.accent)
-ui.homeDoing  = valueRow(statusCard, "Doing", T.accentT)
-ui.homeMoney  = valueRow(statusCard, "Money", T.green)
-ui.homeStolen = valueRow(statusCard, "Stolen this session", T.green)
-ui.homeBest   = valueRow(statusCard, "Best animal", T.amber)
+do
+    local hero = new("Frame", {
+        Parent = tab.home.L, LayoutOrder = 0, BackgroundColor3 = WHITE, BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 156), ClipsDescendants = true,
+    }, {
+        corner(16),
+        new("UIGradient", { Rotation = 20, Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromHex("5b21b6")),
+            ColorSequenceKeypoint.new(0.6, Color3.fromHex("7c3aed")),
+            ColorSequenceKeypoint.new(1, Color3.fromHex("db2777")),
+        }) }),
+    })
+    -- soft light circles behind the cat for depth
+    new("Frame", { Parent = hero, BackgroundColor3 = WHITE, BackgroundTransparency = 0.88, BorderSizePixel = 0,
+        Size = UDim2.fromOffset(190, 190), Position = UDim2.new(1, -150, 0, -50) }, { corner(95) })
+    new("Frame", { Parent = hero, BackgroundColor3 = WHITE, BackgroundTransparency = 0.93, BorderSizePixel = 0,
+        Size = UDim2.fromOffset(110, 110), Position = UDim2.new(1, -60, 1, -70) }, { corner(55) })
+    local cat = new("ImageLabel", {
+        Parent = hero, BackgroundTransparency = 1, Image = IMG.cat, ScaleType = Enum.ScaleType.Fit,
+        AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -6, 1, 8), Size = UDim2.fromOffset(132, 132),
+    })
+    task.spawn(function() -- the cat floats
+        local up = true
+        while alive() and gui.Parent do
+            tween(cat, { Position = UDim2.new(1, -6, 1, up and 0 or 8), Rotation = up and -4 or 3 }, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut))
+            up = not up
+            task.wait(1.8)
+        end
+    end)
+    tr(label(hero, "", 20, WHITE, FONT_BOLD, { Position = UDim2.fromOffset(18, 16), Size = UDim2.new(1, -170, 0, 24) }, true), "Hi, %s", LocalPlayer.DisplayName)
+    ui.homeDoing = label(hero, "", 12, WHITE, FONT_SEMI, { Position = UDim2.fromOffset(18, 42), Size = UDim2.new(1, -170, 0, 16), TextTransparency = 0.15 }, true)
+    local moneyBox = new("Frame", {
+        Parent = hero, BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.72, BorderSizePixel = 0,
+        Position = UDim2.fromOffset(16, 92), Size = UDim2.fromOffset(200, 46),
+    }, { corner(12) })
+    icon(moneyBox, IMG.cash, 30, "$", T.green, { Position = UDim2.fromOffset(8, 8) })
+    label(moneyBox, "Money", 10, WHITE, FONT, { Position = UDim2.fromOffset(46, 5), Size = UDim2.new(1, -52, 0, 12), TextTransparency = 0.3 })
+    ui.homeMoney = label(moneyBox, "$0", 19, WHITE, FONT_BOLD, { Position = UDim2.fromOffset(46, 17), Size = UDim2.new(1, -52, 0, 24) }, true)
+
+    -- three tiles: stolen, speed, best animal
+    local tiles = new("Frame", { Parent = tab.home.L, LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 92) }, {
+        new("UIGridLayout", { CellSize = UDim2.new(1 / 3, -7, 1, 0), CellPadding = UDim2.fromOffset(10, 0), SortOrder = Enum.SortOrder.LayoutOrder }),
+    })
+    local function tile(order, image, title, tint)
+        local t = new("Frame", { Parent = tiles, LayoutOrder = order, BackgroundColor3 = T.card, BorderSizePixel = 0 }, { corner(14), line() })
+        new("Frame", { Parent = t, BackgroundColor3 = tint, BorderSizePixel = 0, Size = UDim2.new(1, -24, 0, 2), Position = UDim2.fromOffset(12, 0) }, { corner(1) })
+        local _, img = icon(t, image, 30, "•", tint, { Position = UDim2.fromOffset(12, 12) })
+        label(t, title, 10, T.muted, FONT, { Position = UDim2.fromOffset(12, 48), Size = UDim2.new(1, -20, 0, 12) })
+        local v = label(t, "—", 14, T.text, FONT_BOLD, { Position = UDim2.fromOffset(12, 62), Size = UDim2.new(1, -20, 0, 18) }, true)
+        local sc = new("UIScale", { Parent = t })
+        t.MouseEnter:Connect(function() tween(sc, { Scale = 1.03 }, MOTION.hover) end)
+        t.MouseLeave:Connect(function() tween(sc, { Scale = 1 }, MOTION.hover) end)
+        return v, img
+    end
+    ui.homeStolen = tile(1, IMG.eggs, "Stolen this session", T.green)
+    ui.homeSpeed = tile(2, IMG.boost, "Speed", T.sky)
+    ui.homeBest, ui.homeBestPic = tile(3, IMG.pets, "Best animal", T.amber)
 
 end
 do local quickCard = card(tab.home.R, 1, "Quick actions", "One tap to start or stop", "▶", T.green)
@@ -2582,7 +2921,9 @@ task.spawn(function()
     while alive() and gui.Parent do
         ui.homeMoney.Text = money(cash())
         ui.homeStolen.Text = placedText.Text
-        ui.homeBest.Text = bestText.Text
+        ui.homeBest.Text = (bestText.Text:gsub("%s+·.*$", ""))
+        ui.homeBestPic.Image = farmPic.best.Image
+        ui.homeSpeed.Text = (shortCash(tonumber(LocalPlayer:GetAttribute("SpeedPower")) or 0):gsub("^%$", ""):gsub("/s$", ""))
         ui.homeDoing.Text = settings.farm and stepText.Text or (settings.treadmill and L("On treadmill") or L("Idle"))
         local ready = readyCount()
         ui.readyText.Text = ready > 0 and L("%d ready", ready) or L("nothing ready")
@@ -2593,10 +2934,17 @@ task.spawn(function()
                 local plot = myPlot()
                 local placed = placedAnimals(plot)
                 ui.penText.Text = L("%s/%s animals", #placed, tostring(plot and plot:GetAttribute("MaxAnimals") or "?"))
-                local _, wv = minOf(cpsOf(placed))
-                local _, bv = maxOf(cpsOf(bagAnimals()))
-                ui.weakText.Text = wv < math.huge and shortCash(wv) or "—"
-                ui.bestBag.Text = bv > 0 and shortCash(bv) or "—"
+                local bag = bagAnimals()
+                local wi, wv = minOf(cpsOf(placed))
+                local bi, bv = maxOf(cpsOf(bag))
+                local function show(textLabel, pic, inst, value)
+                    local name = inst and inst:GetAttribute("AnimalName")
+                    textLabel.Text = inst and string.format("%s  %s", tostring(name), shortCash(value)) or "—"
+                    local img = inst and animalImage(name, inst:GetAttribute("Variant")) or ""
+                    pic.Image = img ~= "" and img or IMG.pets
+                end
+                show(ui.weakText, ui.weakPic, wi and placed[wi], wv)
+                show(ui.bestBag, ui.bestPic, bi and bag[bi], bv)
             end)
         end
         if settings.autoEquipBest and os.clock() - lastEquip > 20 then
