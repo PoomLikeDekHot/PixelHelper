@@ -53,7 +53,7 @@ local SCRIPT_URL = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper
 local ICON_URL   = "https://raw.githubusercontent.com/PoomLikeDekHot/PixelHelper/main/PixelHelper_cat.png"
 local ONLINE     = not SCRIPT_URL:find("YOUR_NAME", 1, true)
 local DISCORD_URL = "https://discord.gg/c2GJGSnAwr" -- bug reports and help
-local VERSION     = "1.8.0" -- shown in Settings, so you can tell the new copy loaded
+local VERSION     = "1.9.0" -- shown in Settings, so you can tell the new copy loaded
 
 do -- re-run this script in the next server: from the web when online, else from the local file
     local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -82,13 +82,15 @@ local RUN_TOKEN = {}
 genv.__PixelHelperToken = RUN_TOKEN
 local function alive() return genv.__PixelHelperToken == RUN_TOKEN end
 
----------------------------------------------------------------- game data (RunConfig / HalloweenConfig / TormentConfig / GearConfig)
+---------------------------------------------------------------- game data (RunConfig / TormentConfig / GearConfig)
+-- RunConfig.Acts (3 arcs: Light 1-5, Blight 6-10, Dawn 11-15), TormentTower.Floors, SoulSwap.Id
 local MODES = {
-    { id = "story", name = "Story", acts = 10,
+    { id = "story", name = "Story", acts = 15, modifiers = true,
       difficulties = { { name = "Normal", id = "normal" }, { name = "Hard", id = "hard" }, { name = "Nightmare", id = "nightmare" } } },
-    { id = "halloween", name = "Halloween",
+    { id = "halloween", name = "Halloween", modifiers = true,
       difficulties = { { name = "Normal", id = "harvest_normal" }, { name = "Hard", id = "harvest_hard" }, { name = "Nightmare", id = "harvest_nightmare" } } },
-    { id = "torment", name = "Torment", tiers = 99 },
+    { id = "torment", name = "Torment", tiers = 100 },
+    { id = "soulswap", name = "Soul Swap" },
 }
 
 -- RunModifiers.List. Story and Halloween only: Torment shows its Gauntlet row instead.
@@ -127,6 +129,7 @@ local SHOP_ITEMS = {
 
 -- GearConfig.Slots kinds and GearConfig.Rarities
 local GEAR_KINDS = { "Weapon", "Helmet", "Chest", "Legs", "Relic", "Scroll" }
+local STATS = { "Vitality", "Defense", "Strength", "Arcane", "Faith", "Dexterity", "Focus" } -- GameConfig.StatAllocation.Order
 local RARITIES = {
     { id = "Common",    color = Color3.fromRGB(205, 207, 199) },
     { id = "Uncommon",  color = Color3.fromRGB(130, 210, 130) },
@@ -152,9 +155,11 @@ local settings = {
     skillMode = 2, -- 1 top first, 2 rotate (next ready), 3 wait in order
     target = 1, delay = 0.8,
     priority = {}, priorityBoss = {},
+    heroSkills = {}, -- [class] = { [skill id] = true }: what the current hero of that class has
     -- run
     autoRun = false, runDelay = 1.0,
-    autoPath = true, pathPriority = {},
+    autoPath = true, pathPriority = {}, roadPick = 1, -- 1 any road, 2 risk first (more gold), 3 safe first
+    autoSoul = true, -- Soul Swap: pick a starter, catch, keep the strongest and send it to fight
     campChoice = 2, shrineTrain = true, altarOffer = false,
     shopBuy = { potion = false, tonic = false, whetstone = false, ward = false },
     autoContinue = true, autoChest = true, autoDeath = true, autoResume = true,
@@ -169,10 +174,9 @@ local settings = {
     -- auto forge (Blacksmith "hone")
     autoForge = false, forgeTarget = 5, forgeReserve = 0, forgeFilter = 1,
     forgePick = {}, -- [gear uid] = true
-    -- pets (Ranch + Candy Witch)
+    -- pets (Ranch)
     autoHatch = false, hatchEggs = {},             -- [egg item id] = true
     autoRelease = false, releaseRarity = { Common = true }, releaseKeepLevel = 0,
-    autoCandyEgg = false, candyKeep = 0,           -- buy Haunted Eggs while candy stays above this
     -- dungeon keys (KeyDungeons)
     autoBlight = false, blightDungeons = {}, blightDiffs = { normal = true, hard = true },
     slimeOrder = 1, slimeMaxTier = 0, blightKeep = 0, -- 1 highest slime first, 2 lowest; 0 = no limit
@@ -180,6 +184,7 @@ local settings = {
     -- hero: race / trait rolls on the Create / Edit Hero screen, Lineage ranks
     autoRollRace = false, rollRaces = {}, autoRollTrait = false, rollTraits = {}, -- [id] = true: stop on any of these
     autoRank = false, rankKeepGold = 0, rankKeepValor = 0,
+    autoStats = false, statTarget = 50, statPlan = {}, -- { id = stat, on }: filled top to bottom
     -- discord webhook: post each finished run
     webhookOn = false, webhookUrl = "", hookVictoryOnly = false, hookItems = true, hookHideName = false,
     -- window
@@ -206,6 +211,12 @@ do -- fill in anything added since the last save
     for _, item in ipairs(SHOP_ITEMS) do
         if settings.shopBuy[item.id] == nil then settings.shopBuy[item.id] = false end
     end
+    if type(settings.statPlan) ~= "table" then settings.statPlan = {} end
+    local planned = {}
+    for _, s in ipairs(settings.statPlan) do planned[s.id] = true end
+    for _, id in ipairs(STATS) do
+        if not planned[id] then table.insert(settings.statPlan, { id = id, on = false }) end
+    end
     for _, k in ipairs(GEAR_KINDS) do
         if settings.sellKinds[k] == nil then settings.sellKinds[k] = false end
     end
@@ -214,6 +225,7 @@ do -- fill in anything added since the last save
     end
     if type(settings.keepNames) ~= "table" then settings.keepNames = {} end
     if type(settings.forgePick) ~= "table" then settings.forgePick = {} end
+    if type(settings.heroSkills) ~= "table" then settings.heroSkills = {} end
     if type(settings.hatchEggs) ~= "table" then settings.hatchEggs = {} end
     if type(settings.releaseRarity) ~= "table" then settings.releaseRarity = { Common = true } end
     if type(settings.blightDungeons) ~= "table" then settings.blightDungeons = {} end
@@ -233,11 +245,10 @@ local function save()
 end
 
 ---------------------------------------------------------------- class + skills
-local GameConfig, GearConfig, PetConfig, HalloweenConfig
+local GameConfig, GearConfig, PetConfig
 pcall(function() GameConfig = require(Shared:WaitForChild("GameConfig", 5)) end)
 pcall(function() GearConfig = require(Shared:WaitForChild("GearConfig", 5)) end)
 pcall(function() PetConfig = require(Shared:WaitForChild("PetConfig", 5)) end)
-pcall(function() HalloweenConfig = require(Shared:WaitForChild("HalloweenConfig", 5)) end)
 
 local function myClass()
     return tostring(LocalPlayer:GetAttribute("RPGClass") or "Unknown")
@@ -297,15 +308,24 @@ local function loadClassSkills()
     onSkillsChanged()
 end
 
--- skills unlocked later (super class, scrolls…) show up in battle; remember them
+-- skills unlocked later (super class, scrolls…) show up in battle; remember them.
+-- The list is per class, so other heroes of the same class add theirs too: settings.heroSkills[class]
+-- keeps what this hero had in battle since the script started, and the list shows only those.
+local seenThisRun = {}
 local function learnFromBattle(state)
     local cls, changed = myClass(), false
+    local seen = seenThisRun[cls] or {}
+    seenThisRun[cls] = seen
     for _, a in ipairs(type(state.actions) == "table" and state.actions or {}) do
         if type(a) == "table" and a.id and categoryOf(a) == "Skill" then
             changed = addSkill(cls, a.id, a.name, tonumber(a.cost) or 0) or changed
+            if not seen[a.id] then seen[a.id], changed = true, true end
         end
     end
-    if changed then save(); onSkillsChanged() end
+    if changed then
+        settings.heroSkills[cls] = seen
+        save(); onSkillsChanged()
+    end
 end
 
 ---------------------------------------------------------------- theme (LAIKA Rejoin tokens)
@@ -553,8 +573,8 @@ local Icons = { mod = nil, slots = {}, onReady = {} }
 local ICON_KEYS = {
     ["Webhook"] = "nodeTreasure", ["Discord Webhook"] = "nodeTreasure", ["What to Send"] = "pouch",
     ["Home"] = "lineage",["Activity"] = "hourglass", ["Community"] = "book",
-    ["Gold"] = "coin", ["Potions"] = "potion", ["Candy"] = "candy", ["Gear"] = "pouch",
-    ["Lobby"] = "duel", ["Auto Farm"] = "sword", ["Run"] = "nodeBoss", ["Auto Sell"] = "coin",
+    ["Gold"] = "coin", ["Potions"] = "potion", ["Valor"] = "valor", ["Gear"] = "pouch",
+    ["Lobby"] = "trophyGold", ["Auto Farm"] = "sword", ["Run"] = "nodeBoss", ["Auto Sell"] = "coin",
     ["Auto Forge"] = "cauldron", ["Settings"] = "book",
     ["Stage"] = "nodeFight", ["Auto Start"] = "hourglass", ["Auto Select Character"] = "lineage",
     ["Auto Combat"] = "skull", ["Attack"] = "sword", ["Defense"] = "shield", ["Potion"] = "potion",
@@ -563,9 +583,9 @@ local ICON_KEYS = {
     ["Gear Types"] = "pouch", ["Rarity"] = "star", ["Never Sell"] = "heart", ["In Your Bag"] = "pouch",
     ["Pick Gear"] = "sword", ["Window"] = "book", ["Files"] = "blueprint", ["Unload"] = "skull",
     ["Keys"] = "key", ["Auto Blight"] = "volatile", ["Auto Use Key"] = "key", ["Your Keys"] = "pouch",
-    ["Pets"] = "paw", ["Auto Hatch"] = "star", ["Haunted Egg"] = "candy", ["Auto Release"] = "paw", ["Your Pets"] = "heart",
-    ["Hero"] = "lineage", ["Auto Roll Race"] = "star", ["Auto Roll Trait"] = "star", ["Auto Rank Up"] = "valor",
-    ["Performance"] = "hourglass",
+    ["Pets"] = "paw", ["Auto Hatch"] = "star", ["Auto Release"] = "paw", ["Your Pets"] = "heart",
+    ["Hero"] = "bloodline", ["Auto Roll Race"] = "RaceScroll", ["Auto Roll Trait"] = "star", ["Auto Rank Up"] = "valor",
+    ["Auto Up Stats"] = "statusUp", ["Performance"] = "hourglass", ["Soul Swap"] = "soulWisp", ["Anti AFK"] = "check",
 }
 
 -- draws art `key` centred in `parent`, as large as fits in `size` px. returns the holder or nil
@@ -904,19 +924,25 @@ local function valueRow(parent, title, color)
 end
 
 -- an ordered list with ▲▼ + switch per item. items = array of { on = bool, ... }
-local function orderedList(container, items, nameOf, extraOf, onChanged)
+-- shown(item) -> false hides that row; ▲ ▼ then swap with the nearest shown neighbour
+local function orderedList(container, items, nameOf, extraOf, onChanged, shown)
     local function render()
         for _, c in ipairs(container:GetChildren()) do
             if c:IsA("Frame") then c:Destroy() end
         end
         container:SetAttribute("rows", 0)
-        if #items == 0 then
+        local vis = {} -- indexes into items of the rows drawn
+        for i, it in ipairs(items) do
+            if not shown or shown(it) then table.insert(vis, i) end
+        end
+        if #vis == 0 then
             row(container, "Nothing here yet", nil)
             return
         end
-        for i, it in ipairs(items) do
+        for k, i in ipairs(vis) do
+            local it = items[i]
             local r = row(container, nil, nil, 36)
-            label(r, tostring(i), 11, T.faint, FONT_BOLD, { Size = UDim2.new(0, 18, 1, 0) })
+            label(r, tostring(k), 11, T.faint, FONT_BOLD, { Size = UDim2.new(0, 18, 1, 0) })
             label(r, nameOf(it), 12, it.on and T.text or T.faint, FONT_SEMI, { Position = UDim2.fromOffset(20, 0), Size = UDim2.new(1, -160, 1, 0) })
             local extra = extraOf and extraOf(it) or ""
             if extra ~= "" then
@@ -925,9 +951,14 @@ local function orderedList(container, items, nameOf, extraOf, onChanged)
                 })
             end
             local upB, downB = smallButton(r, "▲", -76), smallButton(r, "▼", -50)
-            upB.Visible, downB.Visible = i > 1, i < #items
-            upB.MouseButton1Click:Connect(function() items[i], items[i - 1] = items[i - 1], items[i]; save(); render(); if onChanged then onChanged() end end)
-            downB.MouseButton1Click:Connect(function() items[i], items[i + 1] = items[i + 1], items[i]; save(); render(); if onChanged then onChanged() end end)
+            upB.Visible, downB.Visible = k > 1, k < #vis
+            local function swap(j)
+                items[i], items[j] = items[j], items[i]
+                save(); render()
+                if onChanged then onChanged() end
+            end
+            upB.MouseButton1Click:Connect(function() swap(vis[k - 1]) end)
+            downB.MouseButton1Click:Connect(function() swap(vis[k + 1]) end)
             switch(r, function() return it.on end, function() it.on = not it.on; save(); render() end)
         end
     end
@@ -1004,23 +1035,27 @@ col.setL, col.setR       = addTab(nil, "≡", "Settings", "Window, files and unl
 ---------------------------------------------------------------- LOBBY TAB
 -- the picked modifier, or nil when the run uses none (or the mode has no modifiers)
 local function lobbyModifier()
-    local m = MODES[settings.mode].id ~= "torment" and MODIFIERS[settings.modifier]
+    local m = MODES[settings.mode].modifiers and MODIFIERS[settings.modifier]
     return m and m.id ~= "none" and m or nil
 end
 
-local function lobbyPayload()
+-- floor: the Torment floor to send (the lobby logic lowers settings.tier to what this season allows)
+local function lobbyPayload(floor)
     local mode = MODES[settings.mode]
     if mode.id == "torment" then
-        return { action = "solo", difficulty = "torment" .. settings.tier, startAct = 1 }
+        return { action = "solo", difficulty = "torment" .. (floor or settings.tier), startAct = 1 }
+    elseif mode.id == "soulswap" then -- solo only
+        return { action = "solo", difficulty = "soulswap", startAct = 1 }
     end
     local diff = mode.difficulties[settings.diff[settings.mode] or 1]
     -- a modifier can only be set inside a hosted lobby: host one, then L.lobbyTick sets it and starts
     return { action = lobbyModifier() and "host" or "solo", difficulty = diff.id, startAct = mode.acts and settings.act or 1 }
 end
 
-local function lobbyDescribe()
+local function lobbyDescribe(floor)
     local mode = MODES[settings.mode]
-    if mode.id == "torment" then return "Torment " .. settings.tier end
+    if mode.id == "torment" then return "Torment Floor " .. (floor or settings.tier) end
+    if not mode.difficulties then return mode.name end
     local diff = mode.difficulties[settings.diff[settings.mode] or 1]
     local mod = lobbyModifier()
     return mode.name .. " · " .. diff.name .. (mode.acts and (" · Act " .. settings.act) or "") .. (mod and (" · " .. mod.name) or "")
@@ -1109,7 +1144,7 @@ local grid = new("Frame", { Parent = gridRow, BackgroundTransparency = 1, Positi
 })
 local goldText    = statTile(grid, 1, "Gold", "$", T.amber)
 local potionText  = statTile(grid, 2, "Potions", "+", T.pink)
-local candyText   = statTile(grid, 3, "Candy", "♦", Color3.fromHex("fb923c"))
+local valorText   = statTile(grid, 3, "Valor", "▲", T.violet)
 local gearText    = statTile(grid, 4, "Gear", "▣", T.sky)
 local earnedText  = valueRow(profileCard, "Gold this session", T.green)
 local uptimeText  = valueRow(profileCard, "Running for")
@@ -1210,12 +1245,12 @@ function home.mirror(name, source)
     sync()
 end
 
--- data = { class, slot, gold, potions, candy, gear, earned, uptime }; nil fields show "—"
+-- data = { class, slot, gold, potions, valor, gear, earned, uptime }; nil fields show "—"
 function home.update(data)
     classChip.Text = string.upper(data.class or "?")
     slotChip.Text = data.slot and ("SLOT " .. data.slot) or ""
     slotChip.Visible = data.slot ~= nil
-    for _, stat in ipairs({ { goldText, data.gold }, { potionText, data.potions }, { candyText, data.candy }, { gearText, data.gear } }) do
+    for _, stat in ipairs({ { goldText, data.gold }, { potionText, data.potions }, { valorText, data.valor }, { gearText, data.gear } }) do
         if stat[2] then countTo(stat[1], stat[2]) end -- stays "—" until the profile arrives
     end
     if data.earned then
@@ -1262,10 +1297,10 @@ for mi, m in ipairs(MODES) do
     end
 end
 
-local actRow = row(stageCard, nil, nil, 104)
+local actRow = row(stageCard, nil, nil, 139)
 label(actRow, "Start Act", 11, T.muted, FONT_SEMI, { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 16) })
-local actGrid = new("Frame", {
-    Parent = actRow, Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 64), BackgroundTransparency = 1,
+local actGrid = new("Frame", { -- 5 per row: one row per arc
+    Parent = actRow, Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 99), BackgroundTransparency = 1,
 }, { new("UIGridLayout", { CellSize = UDim2.new(0.2, -5, 0, 29), CellPadding = UDim2.fromOffset(5, 6), SortOrder = Enum.SortOrder.LayoutOrder }) })
 local actButtons = {}
 for i = 1, MODES[1].acts do
@@ -1279,7 +1314,7 @@ for i = 1, MODES[1].acts do
     b.MouseButton1Click:Connect(function() settings.act = i; save(); refreshLobby() end)
 end
 
-local tierRow = row(stageCard, "Torment Tier", "Any tier you have unlocked (1 – 99)")
+local tierRow = row(stageCard, "Torment Floor", "Lowered to your best this month + 1")
 local _, refreshTier = stepper(tierRow, function() return settings.tier end, function(v)
     settings.tier = v; save(); refreshLobby()
 end, 1, 1, MODES[3].tiers, "%d")
@@ -1333,7 +1368,7 @@ function refreshLobby()
     diffRow.Visible = mode.difficulties ~= nil
     actRow.Visible = mode.acts ~= nil
     tierRow.Visible = mode.id == "torment"
-    modRow.Visible = mode.id ~= "torment"
+    modRow.Visible = mode.modifiers == true
     local mod = MODIFIERS[settings.modifier] or MODIFIERS[1]
     modName.Text = string.upper(mod.name)
     modName.TextColor3 = mod.id == "none" and T.text or T.accentT
@@ -1429,9 +1464,12 @@ local function renderSkills()
     skillTabsRow.Visible = settings.bossList
     refreshSkillTabs()
     local which = (settings.bossList and settings.skillView == 2) and "boss" or "normal"
+    local have = settings.heroSkills[cls] -- nil until this class has been seen in a battle
     orderedList(skillListFrame, priorityFor(cls, which),
         function(s) return s.name or s.id end,
-        function(s) return (tonumber(s.cost) or 0) > 0 and (s.cost .. " EN") or "" end)
+        function(s) return (tonumber(s.cost) or 0) > 0 and (s.cost .. " EN") or "" end,
+        nil,
+        function(s) return not have or have[s.id] == true end)
 end
 onSkillsChanged = renderSkills
 reloadBtn.MouseButton1Click:Connect(loadClassSkills)
@@ -1459,7 +1497,13 @@ local pathListFrame = new("Frame", {
     Parent = pathCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 }, { vlist(0) })
 orderedList(pathListFrame, settings.pathPriority, function(p) return PATH_NAME[p.id] or p.id end)
-local pathFoot = footerNote(pathCard, "Boss is always taken. Turn Back is only used to leave a run.")
+do
+    local r = row(pathCard, "Road", "Between cards of the same kind", 44)
+    r.LayoutOrder = 55
+    local bar = segmented(r, { "Any", "Risk", "Safe" }, function() return settings.roadPick end, function(i) settings.roadPick = i; save() end)
+    rightAnchor(bar, 156, 28)
+end
+local pathFoot = footerNote(pathCard, "Boss is always taken. Turn Back is only used to leave a run. Risk roads: stronger foes, more gold and XP. Safe roads: weaker foes, less of both.")
 pathFoot.LayoutOrder = 60
 
 local eventCard = card(col.runL, 3, "◎", T.amber, "Events", "What to pick at each stop")
@@ -1490,13 +1534,16 @@ switchRow(flowCard, "Resume Unfinished Battle", "Dropped out mid-fight: head bac
 local endCard = card(col.runR, 2, "⚑", T.pink, "When a Run Ends", "Checked top to bottom")
 sectionLabel(endCard, "Story")
 switchRow(endCard, "Auto Next Act", "Off: stop after the first act (unless Leave after Act is set)", "storyNextAct")
-sliderRow(endCard, "Leave after Act", "Goes home from the map once this act's boss is down", "storyExitAct", 0, 10, 1, "Act %d", "End")
-sectionLabel(endCard, "Torment  ·  all 3 lands are played")
-switchRow(endCard, "Auto Next Tier", "Start the next tier after land 3", "tormentNextTier")
-sliderRow(endCard, "Stop after Tier", "Back to castle once this tier is cleared", "tormentExitTier", 0, 99, 1, "Tier %d", "Never")
-sectionLabel(endCard, "Story · Halloween · Torment")
+sliderRow(endCard, "Leave after Act", "Goes home from the map once this act's boss is down", "storyExitAct", 0, 15, 1, "Act %d", "End")
+sectionLabel(endCard, "Torment Tower  ·  all 3 lands are played")
+switchRow(endCard, "Auto Next Floor", "Climb to the next floor after land 3", "tormentNextTier")
+sliderRow(endCard, "Stop after Floor", "Back to castle once this floor is cleared", "tormentExitTier", 0, 100, 1, "Floor %d", "Never")
+sectionLabel(endCard, "Story · Halloween · Torment · Soul Swap")
 switchRow(endCard, "Auto Replay", "Play the same stage again", "autoReplay")
 switchRow(endCard, "Auto Back to Castle", "Return to the lobby otherwise", "autoCastle")
+
+local soulCard = card(col.runR, 3, "◈", T.violet, "Soul Swap", "Fight as the monsters you beat", "autoSoul")
+footerNote(soulCard, "Picks the starter with the most HP, catches the strongest soul (lets the weakest go when the jar is full) and sends the healthiest one to lead.")
 ui.runStatus = runStatusText
 end -- RUN TAB
 
@@ -1996,10 +2043,31 @@ sliderRow(rankCard, "Keep gold", "Never spend gold below this", "rankKeepGold", 
 sliderRow(rankCard, "Keep Valor", "Never spend Valor below this", "rankKeepValor", 0, 500, 5, "%d", "None")
 footerNote(rankCard, "Lobby only, between runs. Buys as many ranks as you can afford at once (up to 25), like the game's BUY button.")
 
+-- stat points (GameConfig.StatAllocation): fill the top switched-on stat to the target, then the next one
+local statCard = card(col.heroR, 3, "+", T.green, "Auto Up Stats", "Spend stat points top to bottom", "autoStats")
+local statPoints = valueRow(statCard, "Points to spend", T.accentT)
+local statStatus = valueRow(statCard, "Status")
+statPoints.Text, statStatus.Text = "—", "—"
+sliderRow(statCard, "Fill each stat to", "Then moves on to the next one", "statTarget", 1, 50, 1, "%d", nil, function()
+    if ui.hero then ui.hero.renderStats() end
+end)
+local statListFrame = new("Frame", {
+    Parent = statCard, LayoutOrder = 50, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+}, { vlist(0) })
+local renderStats = orderedList(statListFrame, settings.statPlan,
+    function(s) return s.id end,
+    function(s)
+        local have = profile and type(profile.allocatedStats) == "table" and tonumber(profile.allocatedStats[s.id])
+        return have and string.format("%d/%d", have, settings.statTarget) or ""
+    end)
+local statFoot = footerNote(statCard, "Each stat holds up to 50 points. You get 2 points per level. Focus widens QTE and dodge windows.")
+statFoot.LayoutOrder = 60
+
 ui.hero = {
     Race  = { status = raceStatus, refresh = refreshRace },
     Trait = { status = traitStatus, refresh = refreshTrait },
     rankNow = rankNow, rankNext = rankNext, rankStatus = rankStatus,
+    statPoints = statPoints, statStatus = statStatus, renderStats = renderStats,
 }
 end -- HERO TAB
 
@@ -2018,14 +2086,6 @@ local eggList = new("Frame", {
 }, { vlist(0) })
 local hatchFoot = footerNote(hatchCard, "Eggs rarer than your ranch allows are skipped. Release or upgrade the ranch when it is full.")
 hatchFoot.LayoutOrder = 60
-
-local candyCard = card(col.petL, 2, "♦", T.amber, "Haunted Egg", "Candy Witch: buy Haunted Eggs with candy", "autoCandyEgg")
-local candyText = valueRow(candyCard, "Candy", T.amber)
-candyText.Text = "—"
-local candyStatus = valueRow(candyCard, "Status")
-candyStatus.Text = "—"
-sliderRow(candyCard, "Keep candy above", "Stops buying before candy drops below this", "candyKeep", 0, 20000, 100, "%d")
-footerNote(candyCard, "Each Haunted Egg costs 220 candy. Only while the Halloween stall is open; you can hold 99 eggs.")
 
 local releaseCard = card(col.petR, 1, "✕", T.pink, "Auto Release", "Lets go of pets of the ticked rarities", "autoRelease")
 local releaseStatus = valueRow(releaseCard, "Status")
@@ -2048,7 +2108,6 @@ local petList = new("Frame", {
 
 ui.pets = {
     hatchStatus = hatchStatus, ranch = ranchText, eggList = eggList,
-    candy = candyText, candyStatus = candyStatus,
     releaseStatus = releaseStatus, petList = petList,
 }
 end -- PETS TAB
@@ -2295,12 +2354,25 @@ end
 -- so a lobby the player hosts by hand is left alone.
 local lobbyState, hostedAt = nil, -math.huge
 
+-- Torment Tower resets every month (TormentTower.Season): a floor above your best this season + 1 is
+-- refused with "Clear floor N first", so the saved floor is lowered to TormentConfig.MaxTier.
+local function tormentFloor()
+    local floor = settings.tier
+    if not profile then return floor end
+    pcall(function()
+        local Torment = require(Shared:WaitForChild("RunConfig", 5)).Torment
+        floor = math.min(floor, Torment.MaxTier(profile, Torment.Tower.Season(workspace:GetServerTimeNow())))
+    end)
+    return floor
+end
+
 local function fireStart()
     lastLobbyFire = os.clock()
-    local payload = lobbyPayload()
+    local floor = MODES[settings.mode].id == "torment" and tormentFloor() or nil
+    local payload = lobbyPayload(floor)
     if payload.action == "host" then hostedAt = os.clock() end
     RPGCommand:FireServer("RunLobby", payload)
-    ui.lobbyStatus.Text = "Sent: " .. lobbyDescribe()
+    ui.lobbyStatus.Text = "Sent: " .. lobbyDescribe(floor)
 end
 
 local function ourLobby()
@@ -2761,6 +2833,7 @@ local function runSend(state, payload)
 end
 
 local function modeOf(state)
+    if type(state.soulswap) == "table" then return "soulswap" end
     if state.tormentTier or type(state.gauntlet) == "table" then return "torment" end
     if state.land == "haunted" then return "halloween" end
     return "story"
@@ -2794,18 +2867,44 @@ local function leaveAfterThisAct(state)
     return exitAct > 0 and (tonumber(state.act) or 1) >= exitAct
 end
 
+-- leave the run from this map screen: past the wanted act, or on "LAND CLEARED!" after it
+local function leavingNow(state)
+    if state.dungeon then return false end
+    return wantsToLeave(state) or (state.landCleared == true and leaveAfterThisAct(state))
+end
+
+-- RunConfig.Roads: a path card may carry a road (card.road = id) of kind "risk", "safe" or "field"
+local ROAD_KIND = {}
+pcall(function()
+    for id, r in pairs(require(Shared:WaitForChild("RunConfig", 5)).RoadById or {}) do ROAD_KIND[id] = r.kind end
+end)
+local ROAD_SCORE = {
+    { },                                         -- any: first card of the kind
+    { risk = 3, field = 2, none = 1, safe = 0 }, -- risk first
+    { safe = 3, none = 2, field = 1, risk = 0 }, -- safe first
+}
+
 local function choosePath(state)
     local cards = type(state.choices) == "table" and state.choices or {}
     if #cards == 0 then return nil end
     -- "dungeonReturn" leaves a key dungeon early (back to the story). It is never the way to finish a dungeon,
     -- so it is only taken when it is the only card; "retreat" (Turn Back) is the real way out of a run.
+    -- Between cards of the same kind, the Road setting decides.
+    local score = ROAD_SCORE[settings.roadPick] or ROAD_SCORE[1]
     local function indexOf(t)
+        local best, bestScore
         for i, c in ipairs(cards) do
-            if c.type == t then return i end
+            if c.type == t then
+                local s = score[c.road and ROAD_KIND[c.road] or "none"] or 0
+                if not best or s > bestScore then best, bestScore = i, s end
+            end
         end
+        return best
     end
     if indexOf("boss") then return indexOf("boss"), "Boss" end
-    if not state.dungeon and wantsToLeave(state) and indexOf("retreat") then return indexOf("retreat"), "Turn Back (leaving)" end
+    if leavingNow(state) and indexOf("retreat") then return indexOf("retreat"), "Turn Back (leaving)" end
+    -- "LAND CLEARED!" after an act boss: Continue Adventure (nextLand) or Replay Land (replayLand)
+    if indexOf("nextLand") then return indexOf("nextLand"), "Continue Adventure" end
     for _, p in ipairs(settings.pathPriority) do
         if p.on then
             local i = indexOf(p.id)
@@ -2813,7 +2912,9 @@ local function choosePath(state)
         end
     end
     for i, c in ipairs(cards) do
-        if c.type ~= "retreat" and c.type ~= "dungeonReturn" then return i, PATH_NAME[c.type] or tostring(c.type) end
+        if c.type ~= "retreat" and c.type ~= "dungeonReturn" and c.type ~= "replayLand" then
+            return i, PATH_NAME[c.type] or tostring(c.type)
+        end
     end
     return 1, "First card"
 end
@@ -2874,6 +2975,61 @@ local function handleEvent(state)
     end
 end
 
+-- Soul Swap screens (SoulSwapView.MapScreen) read state.soulswap = { offer, jar, incoming, lead }.
+-- A soul is { id, tier, hp, maxHp }; maxHp already counts its tier, so it is the strength we rank by.
+local SOUL_PHASES = { soulpick = true, soulcatch = true, soullead = true }
+
+local function soulStrength(s) return type(s) == "table" and (tonumber(s.maxHp) or 0) or -1 end
+
+local function bestSoul(list, score)
+    local best, bestScore
+    for i, s in ipairs(list) do
+        local v = score(s)
+        if not best or v > bestScore then best, bestScore = i, v end
+    end
+    return best
+end
+
+local function handleSoul(state)
+    local ss = state.soulswap
+    local key = tostring(state.id) .. ":" .. tostring(state.round) .. ":" .. state.phase
+    local jar = type(ss.jar) == "table" and ss.jar or {}
+    local offer = type(ss.offer) == "table" and ss.offer or {}
+    if state.phase == "soulpick" then
+        local i = bestSoul(offer, soulStrength)
+        if i and once(key, 6) then
+            runSend(state, { action = "soulPick", index = i })
+            setRunStatus("Soul Swap: starter picked")
+        end
+    elseif state.phase == "soulcatch" then
+        if type(ss.incoming) == "table" then
+            -- jar full: let the weakest go; the new soul is the slot after the jar
+            local all = table.clone(jar)
+            table.insert(all, ss.incoming)
+            local i = bestSoul(all, function(s) return -soulStrength(s) end)
+            if once(key .. ":release", 6) then
+                runSend(state, { action = "soulRelease", slot = i })
+                setRunStatus(i == #all and "Soul Swap: new soul let go" or "Soul Swap: weakest soul let go")
+            end
+        elseif #offer > 0 then
+            if once(key .. ":catch", 6) then
+                runSend(state, { action = "soulCatch", index = bestSoul(offer, soulStrength) })
+                setRunStatus("Soul Swap: soul caught")
+            end
+        elseif once(key .. ":skip", 6) then
+            runSend(state, { action = "soulSkip" })
+        end
+    else -- soullead: the soul with the most HP left leads, then fight
+        local i = bestSoul(jar, function(s) return tonumber(s.hp) or 0 end)
+        if i and i ~= tonumber(ss.lead) and (tonumber(jar[i].hp) or 0) > 0 then
+            if once(key .. ":lead:" .. i, 6) then runSend(state, { action = "soulLead", slot = i }) end
+        elseif once(key .. ":fight", 6) then
+            runSend(state, { action = "soulFight" })
+            setRunStatus("Soul Swap: to battle")
+        end
+    end
+end
+
 -- "next" | "replay" | "castle" | nil. state may be nil (then the lobby tab's mode is used)
 local function endDecision(state, victory)
     local mode = state and modeOf(state) or MODES[settings.mode].id
@@ -2908,7 +3064,7 @@ local function handleEnd(state)
     local decision = endDecision(state, state.result == "victory")
     if decision == "next" then
         RPGCommand:FireServer("RunLobby", { action = "replayNext", tier = tonumber(state.tormentNext) })
-        setRunStatus("Next tier: Torment " .. tostring(state.tormentNext))
+        setRunStatus("Next floor: " .. tostring(state.tormentNext))
     elseif decision == "replay" then
         RPGCommand:FireServer("RunLobby", { action = "replay" })
         setRunStatus("Replay")
@@ -2929,7 +3085,7 @@ local function tickRun()
         if os.clock() < (R.holdVoteUntil or 0) then return end -- a dungeon key is being offered
         -- past the act we wanted: the game's map button "RETURN HOME" (RunAction "abandon").
         -- Turn Back cards are switched off in RunConfig, and the act-end choice only comes after act 5.
-        if not state.dungeon and wantsToLeave(state) and not hasCard(state, "retreat") then
+        if leavingNow(state) and not hasCard(state, "retreat") then
             if once(tostring(state.id) .. ":home", 8) then
                 runSend(state, { action = "abandon" })
                 setRunStatus("Act " .. tostring(storyExitAct(state)) .. " cleared: Return Home")
@@ -2948,6 +3104,8 @@ local function tickRun()
         end
     elseif phase == "event" then
         handleEvent(state)
+    elseif SOUL_PHASES[phase] and type(state.soulswap) == "table" then
+        if runOn("autoSoul") then handleSoul(state) end
     elseif phase == "story" then
         -- after an act boss: "FOLLOW THE LIGHT" (continue) or "RETURN TO THE CASTLE" (village)
         local leave = leaveAfterThisAct(state)
@@ -3549,21 +3707,54 @@ local function rankTick()
     end)
 end
 
+-- Stat points: RPGCommand:FireServer("AllocateStatPoint", { statId, statContext }) spends one point
+-- (the game's + button). profile.statPoints = unspent, profile.allocatedStats[stat] = spent (max 50).
+-- One point per tick; the local profile is counted down so the next tick goes on, then resynced.
+local MAX_PER_STAT = GameConfig and GameConfig.StatAllocation and tonumber(GameConfig.StatAllocation.MaximumPerStat) or 50
+local statsShown, lastStatSync = nil, 0
+local function statTick()
+    local p, h = profile, ui.hero
+    if not p then return end
+    local points = math.max(0, math.floor(tonumber(p.statPoints) or 0))
+    local spent = type(p.allocatedStats) == "table" and p.allocatedStats or {}
+    h.statPoints.Text = tostring(points)
+    local shown = points .. HttpService:JSONEncode(spent)
+    if shown ~= statsShown then statsShown = shown; h.renderStats() end
+    if not settings.autoStats then return end
+    if points == 0 then h.statStatus.Text = "No points to spend" return end
+    if battle or inBattleNow() then h.statStatus.Text = "Waiting for the battle to end" return end
+    local target = math.min(settings.statTarget, MAX_PER_STAT)
+    for _, s in ipairs(settings.statPlan) do
+        local have = math.floor(tonumber(spent[s.id]) or 0)
+        if s.on and have < target then
+            RPGCommand:FireServer("AllocateStatPoint", { statId = s.id, statContext = p.statContext })
+            p.allocatedStats = spent
+            spent[s.id], p.statPoints = have + 1, points - 1
+            h.statStatus.Text = string.format("%s %d/%d", s.id, have + 1, target)
+            if os.clock() - lastStatSync > 3 then
+                lastStatSync = os.clock()
+                task.delay(1.5, function() requestProfile(true) end)
+            end
+            return
+        end
+    end
+    h.statStatus.Text = "Every switched-on stat is at " .. target
+end
+
 function heroTick()
     for _, r in ipairs(ROLLS) do rollTick(r) end
     rankTick()
+    statTick()
 end
 end -- HERO LOGIC
 
 ---------------------------------------------------------------- PETS LOGIC
 -- Ranch:  RPGCommand:FireServer("Ranch", { action = "hatch", itemId = <egg item> })
 --         RPGCommand:FireServer("Ranch", { action = "release", petId = <pet id> })
--- Candy:  ProfileRequest:InvokeServer("Village", { action = "candy_buy", item = "EggHaunted", hero = <heroSlot> })
 -- profile.pets = { { id, s = species, r = rarity index, lv, locked } }, profile.petId = active pet,
--- profile.ranch = ranch tier, profile.inventory[<egg item>] / [HarvestCandy] = counts
+-- profile.ranch = ranch tier, profile.inventory[<egg item>] = counts
 local petTick -- set below
 do
-local HAUNTED_EGG, EGG_PRICE, EGG_MAX = "EggHaunted", 220, 99
 local RARITY_NAMES = { "Common", "Uncommon", "Rare", "Legendary", "Divine", "Mythic" }
 local RARITY_COLORS = {
     Color3.fromRGB(205, 207, 199), Color3.fromRGB(110, 210, 110), Color3.fromRGB(90, 160, 255),
@@ -3572,7 +3763,6 @@ local RARITY_COLORS = {
 
 local function inv() return profile and type(profile.inventory) == "table" and profile.inventory or {} end
 local function count(id) return math.max(0, math.floor(tonumber(inv()[id]) or 0)) end
-local function candy() return count(HalloweenConfig and HalloweenConfig.CandyId or "HarvestCandy") end
 
 local function pets()
     local out = {}
@@ -3641,7 +3831,6 @@ function renderPets()
     local r = ranch()
     local list = pets()
     P.ranch.Text = profile and string.format("%d / %d pets  ·  hatches up to %s", #list, r.slots or 0, RARITY_NAMES[r.maxRarity or 1] or "?") or "—"
-    P.candy.Text = profile and tostring(candy()) or "—"
 
     -- egg list: picture, name, owned count, tick to hatch
     for _, c in ipairs(P.eggList:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
@@ -3735,42 +3924,11 @@ local function tryHatch()
     return false
 end
 
-local function tryBuyEgg()
-    if not settings.autoCandyEgg or villageBusy then return false end
-    local open = true
-    pcall(function() open = HalloweenConfig.Active(workspace:GetServerTimeNow()) end)
-    if not open then ui.pets.candyStatus.Text = "Candy Witch stall is closed" return false end
-    if count(HAUNTED_EGG) >= EGG_MAX then ui.pets.candyStatus.Text = "Holding 99 eggs" return false end
-    if candy() - EGG_PRICE < settings.candyKeep then
-        ui.pets.candyStatus.Text = string.format("Stopped: keeping %d candy", settings.candyKeep)
-        return false
-    end
-    local req = Remotes:FindFirstChild("ProfileRequest")
-    if not req then return false end
-    villageBusy = true
-    task.spawn(function()
-        local ok, res = pcall(function()
-            return req:InvokeServer("Village", {
-                action = "candy_buy", item = HAUNTED_EGG,
-                hero = profile and profile.heroSlot ~= nil and tostring(profile.heroSlot) or nil,
-            })
-        end)
-        villageBusy = false
-        if ok and type(res) == "table" then
-            if type(res.profile) == "table" then setProfile(res.profile) end
-            ui.pets.candyStatus.Text = res.ok == false and tostring(res.message or "Refused") or "Bought a Haunted Egg"
-        else
-            ui.pets.candyStatus.Text = "No answer from the server"
-        end
-    end)
-    return true
-end
-
 function petTick()
     if not profile or battle or inAdventure() then return end
     if os.clock() - lastAction < 1.5 then return end
     -- release first so a hatch has room; one action per tick
-    if tryRelease() or tryHatch() or tryBuyEgg() then lastAction = os.clock() end
+    if tryRelease() or tryHatch() then lastAction = os.clock() end
 end
 end -- PETS LOGIC
 
@@ -4132,8 +4290,9 @@ end
 ---------------- the end-of-run message
 local function stageName(s)
     if s.land == "haunted" then return "Halloween · " .. titleCase((tostring(s.difficulty or ""):gsub("^harvest_", ""))) end
+    if type(s.soulswap) == "table" or s.difficulty == "soulswap" then return "Soul Swap" end
     local tier = tonumber(s.tormentTier) or tonumber(tostring(s.difficulty or ""):match("^torment(%d+)$"))
-    if tier then return "Torment " .. tier end
+    if tier then return "Torment Tower · Floor " .. tier end
     return "Story · " .. titleCase(s.difficulty or "?")
 end
 
@@ -4339,7 +4498,6 @@ do
             lastSave, s.last = os.time(), os.time()
             save()
         end
-        local inv = p and type(p.inventory) == "table" and p.inventory or {}
         local gear
         if p and type(p.gearBag) == "table" then
             gear = 0
@@ -4350,7 +4508,7 @@ do
             slot    = p and tonumber(p.heroSlot),
             gold    = gold,
             potions = p and tonumber(p.potions),
-            candy   = p and tonumber(inv[HalloweenConfig and HalloweenConfig.CandyId or "HarvestCandy"] or 0),
+            valor   = p and tonumber(p.valor),
             gear    = gear,
             earned  = gold and s.gold and gold - s.gold,
             uptime  = os.time() - s.start,
